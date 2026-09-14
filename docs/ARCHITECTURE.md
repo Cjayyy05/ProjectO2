@@ -1,0 +1,341 @@
+# SelfHeal MVP Architecture
+
+Status: approved Phase 0 architecture  
+Last updated: 2026-09-15
+
+## 1. Architecture summary
+
+SelfHeal is a TypeScript modular monolith with two applications managed with npm workspaces:
+
+- `apps/api`: one Node.js + Express process containing the REST API, JWT authentication, Socket.IO server, monitor loop, diagnosis, verification, recovery, and audit modules;
+- `apps/web`: one Next.js application containing the user interface.
+
+PostgreSQL with Prisma is the only application datastore. The Express backend communicates with the local Docker Engine through a controlled adapter. Bounded sanitized evidence is stored directly in PostgreSQL.
+
+```text
+Browser
+  | REST + Socket.IO
+  v
+Next.js frontend
+  |
+  v
+Express modular monolith --------> PostgreSQL + Prisma
+  |       |       |                   domain data, evidence,
+  |       |       |                   transitions and audit
+  |       |       +--> MockDiagnosisProvider
+  |       +----------> isolated verification containers
+  +------------------> controlled local Docker adapter
+```
+
+There is no Kafka, Redis, Kubernetes, microservice split, generic workflow engine, or transactional outbox. Socket.IO improves responsiveness; REST reads from PostgreSQL provide authoritative state and recover from missed events.
+
+## 2. Proposed repository structure
+
+```text
+package.json                  # npm workspaces and root scripts
+apps/
+  api/
+    src/
+      app.ts                  # Express and Socket.IO composition
+      auth/
+      projects/
+      monitoring/
+      incidents/
+      evidence/
+      diagnosis/
+      verification/
+      approval/
+      recovery/
+      audit/
+      docker/
+  web/
+    src/
+      app/
+      features/
+      components/
+      lib/
+packages/
+  shared/                     # shared enums and API DTO types only
+prisma/
+  schema.prisma
+  migrations/
+tests/
+  fixtures/                   # deliberately broken Docker applications
+  integration/
+  e2e/
+docs/
+```
+
+Avoid creating a package for every conceptual layer. Inside `apps/api`, modules expose small service interfaces and keep Express handlers, Prisma access, and domain rules separate by convention. Extract code into `packages/` only when both applications genuinely share it.
+
+## 3. Backend module boundaries
+
+| Module | MVP responsibility |
+| --- | --- |
+| Auth | Issue/verify JWTs, load the current user, protect routes |
+| Projects | User-owned Docker application registration and expected health/configuration |
+| Monitoring | In-process polling, container/health observations, detection thresholds |
+| Incidents | Fingerprinting, deduplication, lifecycle guards, incident timeline |
+| Evidence | Incident-specific collectors, sanitization, size limits, PostgreSQL persistence |
+| Diagnosis | `DiagnosisProvider` interface and deterministic `MockDiagnosisProvider` |
+| Verification | Isolated Docker sandbox and deterministic checks |
+| Approval | Exact-plan approval by the owning user |
+| Recovery | Allow-listed actions, revalidation, idempotent steps, health check, rollback |
+| Audit | Append-only records for important actions and transitions |
+| Docker | The only code allowed to call the local Docker Engine |
+| Realtime | Socket.IO notifications emitted after successful commits |
+
+Rules:
+
+- Express route handlers validate input, authenticate, call a service, and format output; they do not contain recovery logic.
+- Services enforce project ownership and state-transition guards.
+- Only the Docker module imports the Docker client library once one is selected.
+- Only the diagnosis module knows which provider is configured.
+- The recovery module accepts only typed, validated actions.
+- Socket.IO payloads contain presentation-safe IDs/state summaries, not raw evidence or secrets.
+
+## 4. Frontend structure
+
+The Next.js application needs these MVP screens:
+
+- JWT login;
+- project list and project registration/edit form;
+- project health view;
+- incident list;
+- incident detail showing evidence, diagnosis, proposed plan, verification, approval, recovery, rollback, and audit timeline;
+- approval action with target, action diff, risk, verification result, and rollback capability clearly visible.
+
+The browser calls the Express API for data and commands. It uses Socket.IO to refresh visible incident/project data when events arrive. The client never treats a socket event as authoritative and never carries recovery authority.
+
+## 5. Minimal database model
+
+Use UUID primary keys, `timestamptz`, database foreign keys, and Prisma transactions. Core statuses should be database enums or validated strings with exhaustive TypeScript handling. JSON fields are appropriate for typed snapshots and evidence details; ownership and workflow state remain relational columns.
+
+### `User`
+
+- `id`
+- `email` (unique)
+- `passwordHash` or external identity reference, depending on the JWT issuance approach selected during Phase 1
+- timestamps
+
+### `Project`
+
+- `id`, `userId`
+- `name`
+- registered container name/ID selector
+- expected image/configuration metadata
+- health-check URL or port configuration
+- monitoring interval/thresholds
+- `monitoringEnabled`, `nextCheckAt`, `lastCheckedAt`
+- timestamps
+
+Every project query includes `userId`. There is no `Workspace`, `Organization`, `Membership`, `Role`, or tenant hierarchy.
+
+### `Observation`
+
+- `id`, `projectId`
+- observed container status and normalized bounded facts
+- health result
+- `observedAt`
+
+### `Incident`
+
+- `id`, `projectId`, type, state, severity
+- stable fingerprint
+- first/last detected timestamps and occurrence count
+- `version` for guarded concurrent updates
+- resolution fields
+
+A database uniqueness rule should prevent more than one open incident with the same project/type/fingerprint if Prisma migration support permits the required partial index. Otherwise, enforce it with a transaction plus integration tests.
+
+### `Evidence`
+
+- `id`, `incidentId`, kind, source
+- sanitized `content` as bounded text or JSON
+- byte count, truncation flag, SHA-256 digest
+- collection timestamp
+
+Evidence is immutable after insertion. Define per-item and per-incident limits in configuration.
+
+### `Diagnosis`
+
+- `id`, `incidentId`
+- provider name/version (`MockDiagnosisProvider` initially)
+- root-cause code, summary, confidence, evidence references
+- structured provider result and timestamps
+
+### `RecoveryPlan`
+
+- `id`, `incidentId`, version
+- typed actions JSON and human-readable summary
+- rollback description/support flag
+- target snapshot hash and canonical plan hash
+- created timestamp
+
+### `VerificationRun`
+
+- `id`, `recoveryPlanId`, state
+- plan and target hashes
+- sandbox identity, structured check results, bounded output
+- cleanup result, started/completed/expiry timestamps
+
+### `Approval`
+
+- `id`, `recoveryPlanId`, `userId`
+- decision and optional reason
+- verified plan hash and target snapshot hash
+- decision/expiry timestamps
+
+Approval records are not updated to point at a changed plan. A changed plan requires a new verification and approval.
+
+### `RecoveryAttempt` and `RecoveryStep`
+
+- attempt links incident, plan, and approval;
+- attempt stores lifecycle state, unique idempotency key, pre-change snapshot, result/error, timestamps;
+- steps store order, typed action, step state, stable idempotency key, observed before/after values, result/error.
+
+A uniqueness constraint permits only one active recovery attempt per project. A PostgreSQL advisory lock scoped to `projectId` is held while production recovery executes because duplicate production mutation is a demonstrated safety risk.
+
+### `AuditEvent`
+
+- `id`, `userId` where applicable, `projectId` where applicable
+- action, resource type/ID, outcome
+- sanitized details JSON
+- request/correlation ID and timestamp
+
+Audit rows are append-only by application convention and are never cascaded away with projects or incidents. Hash chains, immutable external exports, and separate audit infrastructure are not MVP requirements.
+
+## 6. Monitoring architecture
+
+The Express process runs a small polling loop:
+
+1. Query enabled projects whose `nextCheckAt` is due.
+2. Atomically advance `nextCheckAt` before starting the check so overlapping timer ticks do not duplicate it.
+3. Call read-only methods on the Docker adapter and optional registered health probe.
+4. Store an observation and update/create the matching incident in a transaction.
+5. Start evidence/diagnosis processing only when the incident transition guard permits it.
+
+The hackathon deployment runs one backend instance. On startup, it queries incidents in nonterminal states and safely resumes only operations whose persisted state makes resumption unambiguous. Uncertain recovery steps are inspected against actual Docker state and never replayed blindly.
+
+Do not build a job table, leases, retry scheduler, or worker framework initially. A small bounded retry helper is sufficient for read-only transient operations. Add a lease or dedicated worker only if tests demonstrate overlapping work or event-loop responsiveness problems.
+
+## 7. Diagnosis provider
+
+The provider abstraction is required because Gemini is explicitly planned later, but it remains narrow:
+
+```ts
+interface DiagnosisProvider {
+  diagnose(input: SanitizedDiagnosisInput): Promise<DiagnosisResult>;
+}
+```
+
+`MockDiagnosisProvider` maps deterministic evidence signals for the five incident types to structured root-cause codes and typed proposal templates. Unknown/conflicting evidence returns `INSUFFICIENT_EVIDENCE`. It has no Docker object, executor callback, credentials, or arbitrary tool access.
+
+Provider results are validated before persistence. Gemini can later implement the same interface without changing approval or recovery.
+
+## 8. Docker abstraction
+
+The Express backend connects to the local Docker Engine. All access is centralized behind a small interface with separate read, sandbox, and production methods:
+
+```ts
+interface DockerService {
+  inspectRegisteredContainer(project: ProjectTarget): Promise<ContainerSnapshot>;
+  readBoundedLogs(project: ProjectTarget, limits: LogLimits): Promise<SanitizedLogSlice>;
+  createVerificationSandbox(spec: SandboxSpec): Promise<SandboxHandle>;
+  runVerification(handle: SandboxHandle, plan: TypedRecoveryPlan): Promise<CheckResult[]>;
+  removeVerificationSandbox(handle: SandboxHandle): Promise<void>;
+  applyApprovedAction(target: ProjectTarget, action: AllowedRecoveryAction): Promise<ActionResult>;
+  inspectRecoveryResult(target: ProjectTarget): Promise<ContainerSnapshot>;
+  rollback(target: ProjectTarget, snapshot: RecoverySnapshot): Promise<RollbackResult>;
+}
+```
+
+Implementation rules:
+
+- Resolve only the container registered to the authenticated user's project.
+- Use Docker API calls, not shell command construction.
+- Bound calls with timeouts and log/output limits.
+- Never expose the Docker service to the browser or diagnosis provider.
+- Never mount the Docker socket into monitored or verification containers.
+- Reject arbitrary images, commands, privileged mode, devices, capabilities, host paths, and networks.
+- Label temporary resources and clean them on success, failure, and startup reconciliation.
+- Verification uses isolated networking and no production secrets.
+
+Local Docker access remains highly privileged. For the hackathon, deployment instructions must state that SelfHeal should run only on a controlled developer host and monitor explicitly registered containers.
+
+## 9. Evidence architecture
+
+Collectors are simple functions selected by incident type. They collect container inspection data, bounded recent logs, Docker health output, registered-versus-observed port facts, required environment-key presence/format status, and configured dependency probe results.
+
+Sanitization happens before the Prisma create call. It removes secret-like keys, credentials in URLs, authorization/cookie tokens, private keys, and configured patterns. Store only key presence and validation status for environment variables. Each item records its source, collection time, digest, byte count, and whether it was truncated.
+
+PostgreSQL is the only evidence store for the MVP. Object storage, evidence manifests, retention services, and generic collector frameworks are deferred until actual volume requires them.
+
+## 10. Verification architecture
+
+Verification creates a temporary container/network from the registered image and a safe test configuration. It applies only the proposed typed action and runs deterministic checks such as process survival, Docker health, expected port, HTTP/TCP probe, and absence of known fatal log patterns.
+
+The sandbox receives no production database credentials, Docker socket, privileged mode, or host mounts. If safe isolation cannot be created, verification fails and approval is unavailable. The verification result binds the plan hash and current target snapshot hash and expires after a configured interval.
+
+## 11. Recovery architecture
+
+Recovery is a small deterministic interpreter for the allow-listed action types.
+
+Before the first Docker mutation it:
+
+1. confirms JWT identity and project ownership;
+2. loads the current incident, plan, successful verification, and approval;
+3. verifies the plan/target hashes and expiry;
+4. atomically changes the incident from `AWAITING_APPROVAL` to `RECOVERING`;
+5. acquires a project-scoped PostgreSQL advisory lock;
+6. re-inspects Docker state and aborts on drift;
+7. stores a sufficient pre-change snapshot.
+
+For each step it stores `STARTED`, calls the typed Docker method with a stable idempotency key/label where Docker supports it, inspects actual state, and stores `APPLIED`, `VERIFIED`, or `FAILED`. Following process interruption, `STARTED` means reconcile observed state before any retry.
+
+After all steps, deterministic health checks and a short stability window must pass. On failure, rollback runs only when the plan declares and validates a feasible compensation. Rollback results are audited even when successful.
+
+## 12. Realtime architecture
+
+Socket.IO is attached to the Express HTTP server. After a successful database transaction, the application emits a small event such as `incident.updated`, `verification.completed`, or `recovery.updated` to a room scoped to the authenticated user/project.
+
+There is intentionally no transactional outbox. A process crash can lose a realtime notification, not domain state. Clients refetch REST state when connecting, reconnecting, receiving an event, or while displaying an active recovery. Add an outbox only if a future requirement makes guaranteed event delivery necessary.
+
+## 13. Concurrency and crash recovery
+
+Use the least complex mechanism that protects the concrete race:
+
+- Prisma transactions for related database writes and audit events;
+- conditional state transitions and the incident `version` for monitor/user overlap;
+- unique constraints for duplicate incidents and idempotency keys;
+- one project-scoped PostgreSQL advisory lock for production recovery;
+- persisted recovery step states plus Docker inspection after uncertain outcomes;
+- startup cleanup of labeled verification resources and scan of nonterminal incidents.
+
+No general leases or distributed workflow primitives are part of the MVP. Revisit only if the backend must run multiple instances or measured execution behavior requires it.
+
+## 14. Testing focus
+
+- state-transition and ownership unit tests;
+- Prisma/PostgreSQL transaction, uniqueness, and concurrent-recovery integration tests;
+- fixture containers for all five incident types;
+- evidence sanitization and size-limit tests using seeded secrets;
+- deterministic mock diagnosis tests;
+- verification isolation and cleanup tests;
+- exact-plan approval and stale-target rejection tests;
+- process-interruption/idempotency tests around each recovery action;
+- rollback success and rollback-failure tests;
+- JWT route protection and cross-user project access tests;
+- Socket.IO reconnect/refetch behavior.
+
+## 15. Deferred extensions, not MVP abstractions
+
+- Gemini provider;
+- remote Docker hosts or a host agent;
+- multiple backend replicas;
+- external evidence storage;
+- guaranteed event delivery/outbox;
+- teams, roles, organizations, or enterprise audit export;
+- additional orchestrators or a distributed queue.
+
+These are documented extension points only. The MVP must not implement supporting infrastructure for them.
