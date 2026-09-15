@@ -1,0 +1,292 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum IncidentType {
+  CONTAINER_CRASH
+  HEALTH_CHECK_FAILURE
+  DATABASE_CONNECTION_FAILURE
+  MISSING_OR_INVALID_ENV
+  PORT_CONFIGURATION_FAILURE
+}
+
+enum IncidentState {
+  DETECTED
+  COLLECTING_EVIDENCE
+  DIAGNOSING
+  FIX_PROPOSED
+  VERIFYING
+  AWAITING_APPROVAL
+  RECOVERING
+  RESOLVED
+  DIAGNOSIS_FAILED
+  VERIFICATION_FAILED
+  RECOVERY_FAILED
+}
+
+enum RemediationActionType {
+  RESTART_CONTAINER
+  ROLLBACK_DEPLOYMENT
+  UPDATE_ALLOWED_ENV
+  PATCH_APPLICATION_FILE
+}
+
+enum VerificationState {
+  PENDING
+  PREPARING
+  RUNNING
+  PASSED
+  FAILED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum RecoveryState {
+  PENDING
+  REVALIDATING
+  APPLYING
+  HEALTH_CHECKING
+  SUCCEEDED
+  ROLLING_BACK
+  ROLLED_BACK
+  ROLLBACK_FAILED
+  ABORTED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+}
+
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique
+  passwordHash String
+  projects     Project[]
+  approvals    Approval[]
+  auditEvents  AuditEvent[]
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
+}
+
+model Project {
+  id                         String            @id @default(uuid()) @db.Uuid
+  userId                     String            @db.Uuid
+  user                       User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  name                       String
+  description                String?
+  healthCheckUrl             String?
+  expectedPort               Int?
+  monitoringEnabled          Boolean           @default(false)
+  monitoringIntervalMs       Int?
+  healthCheckTimeoutMs       Int?
+  incidentFailureThreshold   Int?
+  candidateStartupTimeoutMs  Int?
+  nextCheckAt                DateTime?         @db.Timestamptz(3)
+  lastCheckedAt              DateTime?         @db.Timestamptz(3)
+  deployments                Deployment[]
+  incidents                  Incident[]
+  recoveryAttempts           RecoveryAttempt[]
+  auditEvents                AuditEvent[]
+  createdAt                  DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt                  DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([userId])
+}
+
+model Deployment {
+  id                    String     @id @default(uuid()) @db.Uuid
+  projectId             String     @db.Uuid
+  project               Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name                  String
+  containerName         String     @unique
+  imageReference        String
+  configurationSnapshot Json?
+  incidents             Incident[]
+  createdAt             DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime   @updatedAt @db.Timestamptz(3)
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model Incident {
+  id                 String            @id @default(uuid()) @db.Uuid
+  projectId          String            @db.Uuid
+  project            Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  deploymentId       String?           @db.Uuid
+  deployment         Deployment?       @relation(fields: [deploymentId], references: [id], onDelete: Restrict)
+  type               IncidentType
+  state              IncidentState     @default(DETECTED)
+  severity           String            @default("MEDIUM")
+  fingerprint        String
+  version            Int               @default(1)
+  occurrenceCount    Int               @default(1)
+  firstDetectedAt    DateTime          @default(now()) @db.Timestamptz(3)
+  lastDetectedAt     DateTime          @default(now()) @db.Timestamptz(3)
+  resolvedAt         DateTime?         @db.Timestamptz(3)
+  evidence           IncidentEvidence[]
+  diagnosis          Diagnosis?
+  remediationPlans   RemediationPlan[]
+  verificationRuns   VerificationRun[]
+  recoveryAttempts   RecoveryAttempt[]
+  auditEvents        AuditEvent[]
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([projectId, state])
+  @@index([deploymentId])
+}
+
+model IncidentEvidence {
+  id          String   @id @default(uuid()) @db.Uuid
+  incidentId  String   @db.Uuid
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  kind        String
+  source      String
+  content     String
+  metadata    Json?
+  byteCount   Int
+  lineCount   Int
+  truncated   Boolean  @default(false)
+  contentHash String
+  collectedAt DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt   DateTime @db.Timestamptz(3)
+
+  @@index([incidentId, collectedAt])
+  @@index([expiresAt])
+}
+
+model Diagnosis {
+  id                 String   @id @default(uuid()) @db.Uuid
+  incidentId         String   @unique @db.Uuid
+  incident           Incident @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  provider            String
+  providerVersion     String
+  rootCauseCode       String
+  summary             String
+  confidence          Float
+  evidenceReferences Json
+  result              Json
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model RemediationPlan {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  incidentId         String                  @db.Uuid
+  incident           Incident                @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  version            Int                     @default(1)
+  actionTypes        RemediationActionType[]
+  actions            Json
+  summary            String
+  rollbackSupported  Boolean                 @default(false)
+  rollbackDescription String?
+  planHash           String
+  targetSnapshotHash String
+  verificationRuns   VerificationRun[]
+  approvals           Approval[]
+  recoveryAttempts    RecoveryAttempt[]
+  createdAt           DateTime                @default(now()) @db.Timestamptz(3)
+
+  @@unique([incidentId, version])
+  @@index([incidentId])
+}
+
+model VerificationRun {
+  id                 String            @id @default(uuid()) @db.Uuid
+  incidentId         String            @db.Uuid
+  incident           Incident          @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  remediationPlanId  String            @db.Uuid
+  remediationPlan    RemediationPlan   @relation(fields: [remediationPlanId], references: [id], onDelete: Restrict)
+  state              VerificationState @default(PENDING)
+  planHash           String
+  targetSnapshotHash String
+  sandboxIdentifier  String?
+  checkResults       Json?
+  boundedOutput      String?
+  cleanupSucceeded   Boolean?
+  startedAt          DateTime?         @db.Timestamptz(3)
+  completedAt        DateTime?         @db.Timestamptz(3)
+  expiresAt          DateTime?         @db.Timestamptz(3)
+  approvals          Approval[]
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([incidentId])
+  @@index([remediationPlanId, state])
+}
+
+model Approval {
+  id                 String             @id @default(uuid()) @db.Uuid
+  remediationPlanId  String             @db.Uuid
+  remediationPlan    RemediationPlan    @relation(fields: [remediationPlanId], references: [id], onDelete: Restrict)
+  verificationRunId  String             @db.Uuid
+  verificationRun    VerificationRun    @relation(fields: [verificationRunId], references: [id], onDelete: Restrict)
+  userId             String             @db.Uuid
+  user               User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  decision           ApprovalDecision
+  reason             String?
+  planHash           String
+  targetSnapshotHash String
+  decidedAt          DateTime           @default(now()) @db.Timestamptz(3)
+  expiresAt          DateTime           @db.Timestamptz(3)
+  recoveryAttempt    RecoveryAttempt?
+
+  @@index([remediationPlanId, decidedAt])
+  @@index([userId])
+}
+
+model RecoveryAttempt {
+  id                String          @id @default(uuid()) @db.Uuid
+  projectId         String          @db.Uuid
+  project           Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  incidentId        String          @db.Uuid
+  incident          Incident        @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  remediationPlanId String          @db.Uuid
+  remediationPlan   RemediationPlan @relation(fields: [remediationPlanId], references: [id], onDelete: Restrict)
+  approvalId        String          @unique @db.Uuid
+  approval          Approval        @relation(fields: [approvalId], references: [id], onDelete: Restrict)
+  state             RecoveryState   @default(PENDING)
+  idempotencyKey    String          @unique
+  preChangeSnapshot Json?
+  result             Json?
+  errorCode          String?
+  errorMessage       String?
+  startedAt          DateTime?      @db.Timestamptz(3)
+  completedAt        DateTime?      @db.Timestamptz(3)
+  createdAt          DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @db.Timestamptz(3)
+
+  @@index([incidentId])
+  @@index([projectId, state])
+}
+
+model AuditEvent {
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String?      @db.Uuid
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  projectId    String?      @db.Uuid
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  incidentId   String?      @db.Uuid
+  incident     Incident?    @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  action       String
+  resourceType String
+  resourceId   String?
+  outcome      AuditOutcome
+  requestId    String?
+  details      Json?
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([projectId, createdAt])
+  @@index([incidentId, createdAt])
+}
+

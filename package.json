@@ -1,0 +1,31 @@
+{
+  "name": "selfheal",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "npm run build -w @selfheal/shared && npm run build -w @selfheal/api && npm run build -w @selfheal/web",
+    "dev:api": "npm run build -w @selfheal/shared && npm run dev -w @selfheal/api",
+    "dev:web": "npm run build -w @selfheal/shared && npm run dev -w @selfheal/web",
+    "typecheck": "npm run build -w @selfheal/shared && npm run typecheck -w @selfheal/api && npm run typecheck -w @selfheal/web",
+    "lint": "eslint . --max-warnings 0",
+    "test": "npm run build -w @selfheal/shared && npm run test -w @selfheal/shared && npm run test -w @selfheal/api",
+    "prisma:generate": "npm run prisma:generate -w @selfheal/api",
+    "prisma:validate": "npm run prisma:validate -w @selfheal/api",
+    "prisma:migrate:dev": "npm run prisma:migrate:dev -w @selfheal/api"
+  },
+  "devDependencies": {
+    "@prisma/client": "6.12.0",
+    "@typescript-eslint/eslint-plugin": "8.42.0",
+    "@typescript-eslint/parser": "8.42.0",
+    "eslint": "9.39.5",
+    "prisma": "6.12.0",
+    "typescript": "5.9.2"
+  }
+}
