@@ -1,4 +1,4 @@
-import { MVP_DEFAULTS } from "@selfheal/shared";
+import { MONITORING_LIMITS, MVP_DEFAULTS } from "@selfheal/shared";
 import { z } from "zod";
 
 const booleanFromString = z
@@ -35,18 +35,34 @@ const environmentSchema = z.object({
   HEALTH_CHECK_TIMEOUT_MS: z.coerce
     .number()
     .int()
-    .positive()
+    .min(MONITORING_LIMITS.healthCheckTimeoutMs.min)
+    .max(MONITORING_LIMITS.healthCheckTimeoutMs.max)
     .default(MVP_DEFAULTS.healthCheckTimeoutMs),
   MONITORING_INTERVAL_MS: z.coerce
     .number()
     .int()
-    .positive()
+    .min(MONITORING_LIMITS.intervalMs.min)
+    .max(MONITORING_LIMITS.intervalMs.max)
     .default(MVP_DEFAULTS.monitoringIntervalMs),
+  MONITOR_POLL_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(MONITORING_LIMITS.pollIntervalMs.min)
+    .max(MONITORING_LIMITS.pollIntervalMs.max)
+    .default(MVP_DEFAULTS.monitorPollIntervalMs),
   INCIDENT_FAILURE_THRESHOLD: z.coerce
     .number()
     .int()
-    .positive()
+    .min(MONITORING_LIMITS.incidentFailureThreshold.min)
+    .max(MONITORING_LIMITS.incidentFailureThreshold.max)
     .default(MVP_DEFAULTS.incidentFailureThreshold),
+  DOCKER_INSPECTION_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(MONITORING_LIMITS.healthCheckTimeoutMs.min)
+    .max(MONITORING_LIMITS.healthCheckTimeoutMs.max)
+    .default(MVP_DEFAULTS.dockerInspectionTimeoutMs),
+  DOCKER_SOCKET_PATH: z.string().trim().min(1).optional(),
   CANDIDATE_STARTUP_TIMEOUT_MS: z.coerce
     .number()
     .int()
@@ -74,7 +90,10 @@ export interface AppConfig {
   readonly monitoring: {
     readonly healthCheckTimeoutMs: number;
     readonly intervalMs: number;
+    readonly pollIntervalMs: number;
     readonly incidentFailureThreshold: number;
+    readonly dockerInspectionTimeoutMs: number;
+    readonly dockerSocketPath?: string;
     readonly candidateStartupTimeoutMs: number;
   };
   readonly verification: {
@@ -125,7 +144,10 @@ export function loadEnvironment(source: NodeJS.ProcessEnv): AppConfig {
     monitoring: {
       healthCheckTimeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
       intervalMs: env.MONITORING_INTERVAL_MS,
+      pollIntervalMs: env.MONITOR_POLL_INTERVAL_MS,
       incidentFailureThreshold: env.INCIDENT_FAILURE_THRESHOLD,
+      dockerInspectionTimeoutMs: env.DOCKER_INSPECTION_TIMEOUT_MS,
+      ...(env.DOCKER_SOCKET_PATH === undefined ? {} : { dockerSocketPath: env.DOCKER_SOCKET_PATH }),
       candidateStartupTimeoutMs: env.CANDIDATE_STARTUP_TIMEOUT_MS
     },
     verification: MVP_DEFAULTS.verification,

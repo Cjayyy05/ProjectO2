@@ -66,6 +66,21 @@ enum AuditOutcome {
   FAILURE
 }
 
+enum DeploymentHealthState {
+  UNKNOWN
+  HEALTHY
+  UNHEALTHY
+}
+
+enum ContainerRuntimeState {
+  UNKNOWN
+  RUNNING
+  STOPPED
+  MISSING
+  PAUSED
+  RESTARTING
+}
+
 model User {
   id           String       @id @default(uuid()) @db.Uuid
   email        String       @unique
@@ -84,6 +99,7 @@ model Project {
   name                       String
   description                String?
   healthCheckUrl             String?
+  healthCheckPath            String?
   expectedPort               Int?
   monitoringEnabled          Boolean           @default(false)
   monitoringIntervalMs       Int?
@@ -100,16 +116,24 @@ model Project {
   updatedAt                  DateTime          @updatedAt @db.Timestamptz(3)
 
   @@index([userId])
+  @@index([monitoringEnabled, nextCheckAt])
 }
 
 model Deployment {
   id                    String     @id @default(uuid()) @db.Uuid
   projectId             String     @db.Uuid
   project               Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  isCurrent             Boolean    @default(true)
   name                  String
   containerName         String     @unique
   imageReference        String
   configurationSnapshot Json?
+  lastContainerState    ContainerRuntimeState @default(UNKNOWN)
+  lastHealthState       DeploymentHealthState @default(UNKNOWN)
+  lastHttpStatus        Int?
+  consecutiveFailures   Int                   @default(0)
+  lastCheckErrorCode    String?
+  lastCheckedAt         DateTime?             @db.Timestamptz(3)
   incidents             Incident[]
   createdAt             DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime   @updatedAt @db.Timestamptz(3)
@@ -128,6 +152,8 @@ model Incident {
   state              IncidentState     @default(DETECTED)
   severity           String            @default("MEDIUM")
   fingerprint        String
+  detectionSource    String?
+  detectionReason    String?
   version            Int               @default(1)
   occurrenceCount    Int               @default(1)
   firstDetectedAt    DateTime          @default(now()) @db.Timestamptz(3)
@@ -289,4 +315,3 @@ model AuditEvent {
   @@index([projectId, createdAt])
   @@index([incidentId, createdAt])
 }
-

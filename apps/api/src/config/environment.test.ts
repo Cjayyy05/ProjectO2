@@ -16,7 +16,9 @@ describe("environment validation", () => {
     expect(config.monitoring).toEqual({
       healthCheckTimeoutMs: 2_000,
       intervalMs: 10_000,
+      pollIntervalMs: 1_000,
       incidentFailureThreshold: 3,
+      dockerInspectionTimeoutMs: 2_000,
       candidateStartupTimeoutMs: 60_000
     });
     expect(config.verification.productionDatabaseAllowed).toBe(false);
@@ -55,6 +57,18 @@ describe("environment validation", () => {
 
     expect(config.evidence).toEqual({ maxBytes: 1_024, maxLines: 25, retentionDays: 7 });
     expect(config.monitoring.intervalMs).toBe(15_000);
+  });
+
+  it.each([
+    ["HEALTH_CHECK_TIMEOUT_MS", "99"],
+    ["MONITORING_INTERVAL_MS", "999"],
+    ["MONITOR_POLL_INTERVAL_MS", "60001"],
+    ["INCIDENT_FAILURE_THRESHOLD", "21"],
+    ["DOCKER_INSPECTION_TIMEOUT_MS", "30001"]
+  ])("rejects unsafe monitoring bound %s=%s", (name, value) => {
+    expect(() => loadEnvironment({ ...validEnvironment, [name]: value })).toThrow(
+      EnvironmentValidationError
+    );
   });
 
   it.each(["ftp://localhost:3000", "http://user:secret@localhost:3000", "http://localhost:3000/app"])(

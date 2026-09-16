@@ -129,7 +129,7 @@ describe("Express application foundation", () => {
 
     const created = await owner
       .post("/api/projects")
-      .send({ name: "Demo API", healthCheckUrl: "http://localhost:8080/health", expectedPort: 8080 })
+      .send({ name: "Demo API", healthCheckPath: "/health", expectedPort: 8080 })
       .expect(201);
     const projectId = created.body.project.id as string;
 
@@ -137,7 +137,7 @@ describe("Express application foundation", () => {
     expect(response.body.project).toMatchObject({
       id: projectId,
       name: "Demo API",
-      healthCheckUrl: "http://localhost:8080/health",
+      healthCheckPath: "/health",
       expectedPort: 8080
     });
   });
@@ -162,33 +162,150 @@ describe("Express application foundation", () => {
     expect(otherList.body.projects).toHaveLength(0);
   });
 
-  it("ignores a caller-supplied owner and assigns the authenticated user", async () => {
+  it("rejects a caller-supplied owner field", async () => {
     const { app } = createTestApplication();
     const owner = request.agent(app);
-    const registration = await owner.post("/api/auth/register").send(validCredentials).expect(201);
+    await owner.post("/api/auth/register").send(validCredentials).expect(201);
 
-    const created = await owner
+    await owner
       .post("/api/projects")
       .send({ name: "Owned project", userId: "00000000-0000-0000-0000-000000000000" })
-      .expect(201);
-
-    expect(created.body.project.userId).toBe(registration.body.user.id);
+      .expect(400);
   });
 
   it.each([
-    "ftp://localhost/health",
-    "http://user:password@localhost:8080/health"
-  ])("rejects unsafe health-check URL %s", async (healthCheckUrl) => {
+    "https://attacker.example/health",
+    "//attacker.example/health",
+    "/health?token=value",
+    "/health#details",
+    "\\\\attacker.example\\health",
+    "/../health"
+  ])("rejects unsafe health-check path %s", async (healthCheckPath) => {
     const { app } = createTestApplication();
     const owner = request.agent(app);
     await owner.post("/api/auth/register").send(validCredentials).expect(201);
 
     const response = await owner
       .post("/api/projects")
-      .send({ name: "Unsafe project", healthCheckUrl })
+      .send({ name: "Unsafe project", healthCheckPath })
       .expect(400);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("registers a deployment and enables bounded monitoring", async () => {
+    const { app } = createTestApplication();
+    const owner = request.agent(app);
+    await owner.post("/api/auth/register").send(validCredentials).expect(201);
+    const created = await owner.post("/api/projects").send({ name: "Monitored project" }).expect(201);
+    const projectId = created.body.project.id as string;
+
+    await owner
+      .post(`/api/projects/${projectId}/deployments`)
+      .send({ name: "production", containerName: "demo-api", imageReference: "demo/api:latest" })
+      .expect(201);
+    const configured = await owner
+      .patch(`/api/projects/${projectId}/monitoring`)
+      .send({
+        monitoringEnabled: true,
+        healthCheckPath: "/api/health",
+        expectedPort: 8080,
+        monitoringIntervalMs: 10_000,
+        healthCheckTimeoutMs: 2_000,
+        incidentFailureThreshold: 3
+      })
+      .expect(200);
+
+    expect(configured.body.project).toMatchObject({
+      monitoringEnabled: true,
+      healthCheckPath: "/api/health",
+      expectedPort: 8080,
+      incidentFailureThreshold: 3
+    });
+  });
+
+  it("keeps exactly one current deployment when a replacement is registered", async () => {
+    const { app, projects } = createTestApplication();
+    const owner = request.agent(app);
+    await owner.post("/api/auth/register").send(validCredentials).expect(201);
+    const created = await owner.post("/api/projects").send({ name: "Replacement project" }).expect(201);
+    const projectId = created.body.project.id as string;
+
+    const first = await owner
+      .post(`/api/projects/${projectId}/deployments`)
+      .send({ name: "production-v1", containerName: "demo-v1", imageReference: "demo/api:v1" })
+      .expect(201);
+    const second = await owner
+      .post(`/api/projects/${projectId}/deployments`)
+      .send({ name: "production-v2", containerName: "demo-v2", imageReference: "demo/api:v2" })
+      .expect(201);
+
+    expect(first.body.deployment.isCurrent).toBe(true);
+    expect(second.body.deployment.isCurrent).toBe(true);
+    expect(projects.deployments.filter((deployment) => deployment.isCurrent)).toEqual([
+      expect.objectContaining({ id: second.body.deployment.id, projectId })
+    ]);
+    expect(projects.deployments.find((deployment) => deployment.id === first.body.deployment.id))
+      .toMatchObject({ isCurrent: false });
+  });
+
+  it("rejects unsafe Docker identifiers and monitoring bounds", async () => {
+    const { app } = createTestApplication();
+    const owner = request.agent(app);
+    await owner.post("/api/auth/register").send(validCredentials).expect(201);
+    const created = await owner.post("/api/projects").send({ name: "Validated monitor" }).expect(201);
+    const projectId = created.body.project.id as string;
+
+    await owner
+      .post(`/api/projects/${projectId}/deployments`)
+      .send({ name: "production", containerName: "../../docker.sock", imageReference: "demo:latest" })
+      .expect(400);
+    await owner
+      .post(`/api/projects/${projectId}/deployments`)
+      .send({ name: "production", containerName: "safe-container", imageReference: "demo:latest" })
+      .expect(201);
+    await owner
+      .patch(`/api/projects/${projectId}/monitoring`)
+      .send({
+        monitoringEnabled: true,
+        healthCheckPath: "/health",
+        expectedPort: 8080,
+        monitoringIntervalMs: 999,
+        healthCheckTimeoutMs: 2_000,
+        incidentFailureThreshold: 3
+      })
+      .expect(400);
+  });
+
+  it("requires a registered deployment before monitoring can be enabled", async () => {
+    const { app } = createTestApplication();
+    const owner = request.agent(app);
+    await owner.post("/api/auth/register").send(validCredentials).expect(201);
+    const created = await owner.post("/api/projects").send({ name: "No deployment" }).expect(201);
+
+    const response = await owner
+      .patch(`/api/projects/${created.body.project.id}/monitoring`)
+      .send({ monitoringEnabled: true, healthCheckPath: "/health", expectedPort: 8080 })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("DEPLOYMENT_REQUIRED");
+  });
+
+  it("prevents another user from configuring monitoring", async () => {
+    const { app } = createTestApplication();
+    const owner = request.agent(app);
+    const other = request.agent(app);
+    await owner.post("/api/auth/register").send(validCredentials).expect(201);
+    await other
+      .post("/api/auth/register")
+      .send({ email: "other-monitor@example.com", password: "another secure password value" })
+      .expect(201);
+    const created = await owner.post("/api/projects").send({ name: "Private monitor" }).expect(201);
+
+    await other
+      .patch(`/api/projects/${created.body.project.id}/monitoring`)
+      .send({ monitoringEnabled: false })
+      .expect(404);
   });
 
   it("allows only the configured browser origin to read credentialed responses", async () => {

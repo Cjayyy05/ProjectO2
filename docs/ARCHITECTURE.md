@@ -131,12 +131,14 @@ Use UUID primary keys, `timestamptz`, database foreign keys, and Prisma transact
 
 Every project query includes `userId`. There is no `Workspace`, `Organization`, `Membership`, `Role`, or tenant hierarchy.
 
-### `Observation`
+### `Deployment`
 
-- `id`, `projectId`
-- observed container status and normalized bounded facts
-- health result
-- `observedAt`
+- `id`, `projectId`, registered container name, image reference
+- `isCurrent` lifecycle marker
+- latest normalized container/health state, status code, failure count, and check timestamp
+- timestamps
+
+The MVP permits at most one current deployment per project, enforced by a partial unique database index. Registering a replacement atomically makes the previous current deployment historical. Project-level health-check configuration applies only to the current deployment, and historical deployments are never selected or updated by monitoring. Phase 2 stores only the latest bounded observation fields on the deployment; historical evidence collection remains a later phase.
 
 ### `Incident`
 

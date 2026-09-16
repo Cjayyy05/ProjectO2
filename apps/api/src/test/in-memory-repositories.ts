@@ -4,8 +4,11 @@ import { ConflictError } from "../errors/app-error";
 import type { UserRecord, UserRepository } from "../auth/user-repository";
 import type {
   CreateProjectInput,
+  DeploymentRecord,
+  MonitoringConfigurationInput,
   ProjectRecord,
-  ProjectRepository
+  ProjectRepository,
+  RegisterDeploymentInput
 } from "../projects/project-repository";
 
 export class InMemoryAuditWriter implements AuditWriter {
@@ -57,6 +60,7 @@ export class InMemoryUserRepository implements UserRepository {
 
 export class InMemoryProjectRepository implements ProjectRepository {
   public readonly projects: ProjectRecord[] = [];
+  public readonly deployments: DeploymentRecord[] = [];
 
   public async createForOwner(
     ownerId: string,
@@ -69,8 +73,15 @@ export class InMemoryProjectRepository implements ProjectRepository {
       userId: ownerId,
       name: input.name,
       description: input.description ?? null,
-      healthCheckUrl: input.healthCheckUrl ?? null,
+      healthCheckUrl: null,
+      healthCheckPath: input.healthCheckPath ?? null,
       expectedPort: input.expectedPort ?? null,
+      monitoringEnabled: false,
+      monitoringIntervalMs: null,
+      healthCheckTimeoutMs: null,
+      incidentFailureThreshold: null,
+      nextCheckAt: null,
+      lastCheckedAt: null,
       createdAt: now,
       updatedAt: now
     };
@@ -86,5 +97,80 @@ export class InMemoryProjectRepository implements ProjectRepository {
     return (
       this.projects.find((project) => project.id === projectId && project.userId === ownerId) ?? null
     );
+  }
+
+  public async registerDeploymentForOwner(
+    ownerId: string,
+    projectId: string,
+    input: RegisterDeploymentInput,
+    _requestId?: string
+  ): Promise<DeploymentRecord | null> {
+    const project = await this.findByIdForOwner(projectId, ownerId);
+    if (project === null) {
+      return null;
+    }
+    if (
+      this.deployments.some(
+        (deployment) =>
+          deployment.containerName === input.containerName ||
+          (deployment.projectId === projectId && deployment.name === input.name)
+      )
+    ) {
+      throw new ConflictError(
+        "DEPLOYMENT_ALREADY_REGISTERED",
+        "The deployment name or container is already registered"
+      );
+    }
+    this.deployments.forEach((deployment, index) => {
+      if (deployment.projectId === projectId && deployment.isCurrent) {
+        this.deployments[index] = { ...deployment, isCurrent: false, updatedAt: new Date() };
+      }
+    });
+    const now = new Date();
+    const deployment = {
+      id: randomUUID(),
+      projectId,
+      isCurrent: true,
+      ...input,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.deployments.push(deployment);
+    return deployment;
+  }
+
+  public async configureMonitoringForOwner(
+    ownerId: string,
+    projectId: string,
+    input: MonitoringConfigurationInput,
+    _requestId?: string
+  ): Promise<ProjectRecord | null> {
+    const index = this.projects.findIndex(
+      (project) => project.id === projectId && project.userId === ownerId
+    );
+    const existing = this.projects[index];
+    if (existing === undefined) {
+      return null;
+    }
+    if (
+      input.monitoringEnabled &&
+      !this.deployments.some((item) => item.projectId === projectId && item.isCurrent)
+    ) {
+      throw new ConflictError("DEPLOYMENT_REQUIRED", "Register a deployment before enabling monitoring");
+    }
+    const updated: ProjectRecord = {
+      ...existing,
+      monitoringEnabled: input.monitoringEnabled,
+      healthCheckPath: input.healthCheckPath ?? existing.healthCheckPath,
+      expectedPort: input.expectedPort ?? existing.expectedPort,
+      monitoringIntervalMs: input.monitoringIntervalMs ?? existing.monitoringIntervalMs,
+      healthCheckTimeoutMs: input.healthCheckTimeoutMs ?? existing.healthCheckTimeoutMs,
+      incidentFailureThreshold:
+        input.incidentFailureThreshold ?? existing.incidentFailureThreshold,
+      nextCheckAt: input.monitoringEnabled ? new Date() : null,
+      updatedAt: new Date()
+    };
+    this.projects[index] = updated;
+    return updated;
   }
 }
