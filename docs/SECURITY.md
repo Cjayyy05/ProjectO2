@@ -58,6 +58,8 @@ The UI must show the exact target, typed actions, expected effect, risk, verific
 
 Provider output is untrusted. The backend validates it against a strict schema and the server-owned action allow-list. Provider prose is never inserted into a shell command, SQL, Docker API path, URL, or configuration template. Unsupported or uncertain output produces `DIAGNOSIS_FAILED` or an insufficient-evidence result.
 
+Phase 5 adds a second deterministic trust boundary before a suggestion becomes a RemediationPlan. The planning builder has no Docker or filesystem capability. It derives restart targets from the Incident, validates rollback targets through same-Project history, rejects credential-shaped Deployment image identities, accepts only five explicitly non-secret environment keys with narrow value rules, and requires patch paths/hashes to match a trusted Deployment manifest. It stores structured data only; command fields, arbitrary Docker arguments, absolute/traversal paths, symlinks, protected/generated/binary files, secret-bearing patch content, and unbounded payloads are rejected. The persistence boundary revalidates plan structure, target consistency, and the canonical digest; digest mismatch becomes a bounded non-actionable disposition. Plan creation does not execute or verify the action.
+
 Gemini requires a later review of data handling, redaction, credentials, structured output, prompt injection, timeouts, and cost. That adapter must not change the approval or recovery boundary.
 
 ## 6. Evidence and secret handling

@@ -1,6 +1,6 @@
 # SelfHeal
 
-SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 4 monitoring, evidence-collection, and deterministic mock-diagnosis foundation.
+SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 5 monitoring, evidence, deterministic diagnosis, and controlled remediation-planning foundation.
 
 ## Development prerequisites
 
@@ -51,8 +51,16 @@ It deliberately does not contain remediation planning or execution, verification
 
 Set `AI_PROVIDER=mock`. A non-overlapping scheduler atomically claims `DIAGNOSING` Incidents, builds a bounded input exclusively from persisted sanitized IncidentEvidence, and invokes the provider-neutral diagnosis interface. Mock rules have documented deterministic precedence for missing configuration, port mismatch, database connectivity, container crash, generic health failure, and insufficient evidence.
 
-All provider output is treated as untrusted: strict runtime validation rejects unsupported actions, arbitrary commands/paths, invalid confidence, oversized prose, and foreign evidence references. Valid diagnoses reference evidence IDs and atomically move the Incident to `FIX_PROPOSED`; provider or validation failure moves it to `DIAGNOSIS_FAILED`. Proposed remediation remains advisory and does not create a RemediationPlan.
+All provider output is treated as untrusted: strict runtime validation rejects unsupported actions, arbitrary commands/paths, invalid confidence, oversized prose, and foreign evidence references. Valid diagnoses reference evidence IDs and atomically move the Incident to `FIX_PROPOSED`; provider or validation failure moves it to `DIAGNOSIS_FAILED`. The provider suggestion remains advisory until the separate Phase 5 deterministic planning boundary accepts it.
+
+## Phase 5 controlled remediation planning
+
+A separate non-overlapping scheduler processes persisted `FIX_PROPOSED` Diagnoses. Deterministic code resolves every target through the Incident's trusted Project and Deployment relationships, validates the suggestion against the four approved action schemas, captures a trusted drift baseline, and persists one immutable RemediationPlan per Diagnosis. The Incident remains `FIX_PROPOSED`.
+
+Restart targets are derived from the Incident rather than provider input. Rollback targets must be known older Deployments in the same Project. Environment plans permit only `NODE_ENV`, `APP_ENV`, `LOG_LEVEL`, `HOST`, and the Project's registered `PORT`; credential-like names are always rejected. File patches are accepted only for files in a trusted Deployment manifest and reject absolute/traversal paths, symlinks, protected or generated files, `.env` files, SelfHeal source paths, binary content, secrets, more than four files, more than 64 KB of aggregate source/replacement content, or more than 96 KB of aggregate generated diff content.
+
+Plan hashes use canonical JSON and SHA-256 over schema/version, Incident, Diagnosis, Project and affected Deployment identity, action-type identity, the exact typed action, evidence references, diagnosis-result hash, trusted action baseline, review summary, rollback semantics, and target snapshot hash. Creation time is deliberately excluded. Persistence validates the digest again before inserting the plan. Phase 5 reads and writes PostgreSQL only: it does not call Docker, read or write application files, mutate environment configuration, verify, approve, or execute remediation.
 
 Future verification must never use a production database. Database-dependent verification must use a disposable test database or isolated dependency, and verification containers must not receive unnecessary production secrets.
 
-Future production recovery for a project will use one project-scoped PostgreSQL advisory lock. Phase 1 does not implement recovery or a generic lock abstraction.
+Future production recovery for a project will use one project-scoped PostgreSQL advisory lock. Phase 5 does not implement recovery or a generic lock abstraction.

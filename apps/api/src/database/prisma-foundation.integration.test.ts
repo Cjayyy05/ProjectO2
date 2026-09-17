@@ -80,7 +80,7 @@ describeDatabase("Prisma foundation integration", () => {
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000)
         }
       });
-      await prisma.diagnosis.create({
+      const diagnosis = await prisma.diagnosis.create({
         data: {
           incidentId: incident.id,
           provider: "phase-1-placeholder",
@@ -94,12 +94,16 @@ describeDatabase("Prisma foundation integration", () => {
       });
       const plan = await prisma.remediationPlan.create({
         data: {
+          projectId: project.id,
           incidentId: incident.id,
+          diagnosisId: diagnosis.id,
+          deploymentId: deployment.id,
           actionTypes: ["RESTART_CONTAINER"],
           actions: [{ type: "RESTART_CONTAINER", deploymentId: deployment.id }],
+          baseline: {},
           summary: "Domain persistence test only",
-          planHash: `plan-${unique}`,
-          targetSnapshotHash: `target-${unique}`
+          planHash: "a".repeat(64),
+          targetSnapshotHash: "b".repeat(64)
         }
       });
       const verification = await prisma.verificationRun.create({

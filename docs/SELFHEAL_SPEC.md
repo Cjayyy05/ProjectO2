@@ -173,13 +173,14 @@ A plan contains:
 - risk summary;
 - schema version and canonical plan hash.
 
-The initial executable allow-list should be deliberately small:
+Phase 5 plans only the four approved remediation categories:
 
-- `RESTART_CONTAINER`: restart the registered container;
-- `RECREATE_CONTAINER`: recreate it from the registered image/configuration snapshot, only when rollback inputs are complete;
-- `RUN_HEALTH_CHECK`: read-only verification action.
+- `RESTART_CONTAINER`: target the Deployment linked to the Incident;
+- `ROLLBACK_DEPLOYMENT`: target an eligible historical Deployment in the same Project;
+- `UPDATE_ALLOWED_ENV`: update only server-allow-listed non-secret values with a trusted baseline;
+- `PATCH_APPLICATION_FILE`: store a bounded structured patch only when its path and content hash match a trusted application-file manifest.
 
-Environment and port corrections may be proposed as advisory instructions until the MVP has a trustworthy desired-configuration source. Arbitrary images, commands, mounts, networks, privileged mode, Docker socket mounts, and secret values are prohibited.
+Plans remain non-executable until later verification and exact-plan approval phases. Arbitrary images, commands, Docker arguments, mounts, networks, privileged mode, Docker socket mounts, filesystem paths, and secret values are prohibited.
 
 ## 13. Definition of Phase 0 completion
 

@@ -26,6 +26,10 @@ import { MonitoringScheduler } from "./monitoring/monitoring-scheduler";
 import { MonitoringService } from "./monitoring/monitoring-service";
 import { PrismaProjectRepository } from "./projects/prisma-project-repository";
 import { ProjectService } from "./projects/project-service";
+import { PrismaRemediationPlanningRepository } from "./remediation/prisma-remediation-planning-repository";
+import { RemediationPlanBuilder } from "./remediation/remediation-plan-builder";
+import { RemediationPlanningScheduler } from "./remediation/remediation-planning-scheduler";
+import { RemediationPlanningService } from "./remediation/remediation-planning-service";
 
 const config = loadEnvironment(process.env);
 const logger = createLogger(config.nodeEnv);
@@ -50,6 +54,12 @@ const diagnosisScheduler = new DiagnosisScheduler(
     logger,
     config.diagnosis.leaseMs
   ),
+  config.monitoring.pollIntervalMs,
+  logger
+);
+const remediationPlanningRepository = new PrismaRemediationPlanningRepository(prisma);
+const remediationPlanningScheduler = new RemediationPlanningScheduler(
+  new RemediationPlanningService(remediationPlanningRepository, new RemediationPlanBuilder()),
   config.monitoring.pollIntervalMs,
   logger
 );
@@ -96,6 +106,7 @@ const server = createServer(app);
 server.listen(config.port, () => {
   logger.info({ port: config.port }, "SelfHeal API listening");
   diagnosisScheduler.start();
+  remediationPlanningScheduler.start();
   evidenceScheduler.start();
   monitoringScheduler.start();
 });
@@ -113,7 +124,8 @@ async function shutdown(signal: string): Promise<void> {
   const schedulerStops = await Promise.allSettled([
     monitoringScheduler.stop(),
     evidenceScheduler.stop(),
-    diagnosisScheduler.stop()
+    diagnosisScheduler.stop(),
+    remediationPlanningScheduler.stop()
   ]);
   schedulerStops.forEach((result, index) => {
     if (result.status === "rejected") {
@@ -123,7 +135,9 @@ async function shutdown(signal: string): Promise<void> {
           ? "Failed to stop monitoring cleanly"
           : index === 1
             ? "Failed to stop evidence collection cleanly"
-            : "Failed to stop diagnosis cleanly"
+            : index === 2
+              ? "Failed to stop diagnosis cleanly"
+              : "Failed to stop remediation planning cleanly"
       );
       process.exitCode = 1;
     }

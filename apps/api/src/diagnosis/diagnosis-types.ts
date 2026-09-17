@@ -33,18 +33,35 @@ const reason = z.string().trim().min(1).max(500);
 const environmentVariableName = z.string()
   .max(128)
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const sha256Digest = z.string().regex(/^[a-f0-9]{64}$/);
+const environmentChangeSuggestion = z.object({
+  name: environmentVariableName,
+  proposedValue: z.string().max(256)
+}).strict();
+const filePatchSuggestion = z.object({
+  relativePath: z.string().trim().min(1).max(240),
+  expectedContentHash: sha256Digest,
+  originalContent: z.string().max(32 * 1_024),
+  replacementContent: z.string().max(32 * 1_024)
+}).strict();
 const remediationType = z.enum(REMEDIATION_ACTION_TYPES);
 const proposedRemediationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal(remediationType.enum.RESTART_CONTAINER), reason }).strict(),
-  z.object({ type: z.literal(remediationType.enum.ROLLBACK_DEPLOYMENT), reason }).strict(),
+  z.object({
+    type: z.literal(remediationType.enum.ROLLBACK_DEPLOYMENT),
+    targetDeploymentId: z.uuid().optional(),
+    reason
+  }).strict(),
   z.object({
     type: z.literal(remediationType.enum.UPDATE_ALLOWED_ENV),
     variableNames: z.array(environmentVariableName).max(16),
+    changes: z.array(environmentChangeSuggestion).max(4).optional(),
     reason
   }).strict(),
   z.object({
     type: z.literal(remediationType.enum.PATCH_APPLICATION_FILE),
     advisoryDescription: z.string().trim().min(1).max(1_000),
+    files: z.array(filePatchSuggestion).max(4).optional(),
     reason
   }).strict()
 ]);
@@ -80,12 +97,21 @@ export function sanitizeDiagnosisResult(
     : proposed.type === "UPDATE_ALLOWED_ENV"
       ? {
           ...proposed,
+          changes: proposed.changes?.map((change) => ({
+            ...change,
+            proposedValue: sanitizer.sanitizeText(change.proposedValue)
+          })),
           reason: sanitizer.sanitizeText(proposed.reason)
         }
       : proposed.type === "PATCH_APPLICATION_FILE"
         ? {
             ...proposed,
             advisoryDescription: sanitizer.sanitizeText(proposed.advisoryDescription),
+            files: proposed.files?.map((file) => ({
+              ...file,
+              originalContent: sanitizer.sanitizeText(file.originalContent),
+              replacementContent: sanitizer.sanitizeText(file.replacementContent)
+            })),
             reason: sanitizer.sanitizeText(proposed.reason)
           }
         : {
