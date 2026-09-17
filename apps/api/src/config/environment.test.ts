@@ -71,6 +71,16 @@ describe("environment validation", () => {
     );
   });
 
+  it.each([
+    ["EVIDENCE_MAX_BYTES", "262145"],
+    ["EVIDENCE_MAX_LINES", "501"],
+    ["EVIDENCE_RETENTION_DAYS", "366"]
+  ])("rejects unsafe evidence bound %s=%s", (name, value) => {
+    expect(() => loadEnvironment({ ...validEnvironment, [name]: value })).toThrow(
+      EnvironmentValidationError
+    );
+  });
+
   it.each(["ftp://localhost:3000", "http://user:secret@localhost:3000", "http://localhost:3000/app"])(
     "rejects invalid frontend origin %s",
     (frontendOrigin) => {

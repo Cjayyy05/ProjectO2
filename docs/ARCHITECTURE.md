@@ -271,6 +271,8 @@ Collectors are simple functions selected by incident type. They collect containe
 
 Sanitization happens before the Prisma create call. It removes secret-like keys, credentials in URLs, authorization/cookie tokens, private keys, and configured patterns. Store only key presence and validation status for environment variables. Each item records its source, collection time, digest, byte count, and whether it was truncated.
 
+Phase 3 uses a separate non-overlapping in-process scheduler. An atomic guarded transition claims `DETECTED` incidents as `COLLECTING_EVIDENCE`; persistence and the transition to `DIAGNOSING` commit together. A time-bounded optimistic lease lets the scheduler atomically reclaim interrupted collection without concurrent persistence. Collection always targets the Deployment linked on the Incident, even if that Deployment has since become historical. A unique `(incidentId, kind, source)` key and the Incident state/version guard prevent duplicate or stale evidence. Partial collector failures produce sanitized error and completeness records rather than discarding successful evidence. Expiry metadata supports the 30-day retention target; automatic deletion remains deferred operational work.
+
 PostgreSQL is the only evidence store for the MVP. Object storage, evidence manifests, retention services, and generic collector frameworks are deferred until actual volume requires them.
 
 ## 10. Verification architecture

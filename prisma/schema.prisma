@@ -134,11 +134,12 @@ model Deployment {
   consecutiveFailures   Int                   @default(0)
   lastCheckErrorCode    String?
   lastCheckedAt         DateTime?             @db.Timestamptz(3)
-  incidents             Incident[]
+  incidents             Incident[] @relation("IncidentDeployment")
   createdAt             DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime   @updatedAt @db.Timestamptz(3)
 
   @@unique([projectId, name])
+  @@unique([id, projectId])
   @@index([projectId])
 }
 
@@ -147,7 +148,7 @@ model Incident {
   projectId          String            @db.Uuid
   project            Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   deploymentId       String?           @db.Uuid
-  deployment         Deployment?       @relation(fields: [deploymentId], references: [id], onDelete: Restrict)
+  deployment         Deployment?       @relation("IncidentDeployment", fields: [deploymentId, projectId], references: [id, projectId], onDelete: Restrict)
   type               IncidentType
   state              IncidentState     @default(DETECTED)
   severity           String            @default("MEDIUM")
@@ -189,6 +190,7 @@ model IncidentEvidence {
 
   @@index([incidentId, collectedAt])
   @@index([expiresAt])
+  @@unique([incidentId, kind, source])
 }
 
 model Diagnosis {

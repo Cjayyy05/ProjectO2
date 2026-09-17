@@ -1,6 +1,6 @@
 # SelfHeal
 
-SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 2 monitoring and incident-detection foundation.
+SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 3 monitoring, incident-detection, and bounded evidence-collection foundation.
 
 ## Development prerequisites
 
@@ -35,11 +35,17 @@ Never point this integration test at a production database.
 
 Create a project, register its Docker deployment with `POST /api/projects/:projectId/deployments`, then configure monitoring with `PATCH /api/projects/:projectId/monitoring`. A project has at most one current deployment: registering a replacement atomically marks the previous deployment historical, and monitoring selects only the current deployment. Health checks accept a path such as `/health`, never a URL. The backend targets only `127.0.0.1`, verifies that the configured host port is published by the registered container, and never follows redirects.
 
-Docker integration tests are opt-in. Set `RUN_DOCKER_INTEGRATION_TESTS=true` plus `TEST_DOCKER_RUNNING_CONTAINER`, `TEST_DOCKER_RUNNING_PORT`, and `TEST_DOCKER_STOPPED_CONTAINER` to disposable fixtures. The vertical-slice test also requires `RUN_DATABASE_INTEGRATION_TESTS=true` and a disposable migrated database.
+Docker integration tests are opt-in. Set `RUN_DOCKER_INTEGRATION_TESTS=true` plus `TEST_DOCKER_RUNNING_CONTAINER`, `TEST_DOCKER_RUNNING_PORT`, `TEST_DOCKER_STOPPED_CONTAINER`, `TEST_DOCKER_EVIDENCE_CONTAINER`, and `TEST_DOCKER_EVIDENCE_SECRET` to disposable fixtures. The evidence fixture should contain that seeded non-production secret in its environment/logs so redaction can be verified. The vertical-slice tests also require `RUN_DATABASE_INTEGRATION_TESTS=true` and a disposable migrated database. Run database-backed integration files with `vitest run --no-file-parallelism` because they intentionally share that disposable schema and exercise global work claiming.
 
 Phase 2 includes read-only Docker inspection, bounded HTTP checks, persisted health/failure state, in-process scheduling, and deduplicated `CONTAINER_CRASH` and `HEALTH_CHECK_FAILURE` incidents.
 
-It deliberately does not contain evidence collection, diagnosis providers, remediation planning or execution, verification, recovery, rollback, realtime product behavior, or dashboard features.
+## Phase 3 evidence collection
+
+A separate non-overlapping in-process scheduler atomically claims `DETECTED` incidents, collects evidence for the Deployment linked to the Incident, and advances the Incident through `COLLECTING_EVIDENCE` to `DIAGNOSING`. Evidence categories cover registered deployment metadata, latest monitoring state, safe Docker runtime metadata, environment variable names with a narrow safe-value allowlist, bounded recent logs, collection errors, and an explicit completeness summary.
+
+Docker logs are streamed and persisted up to the configured limits of at most 256 KB and 500 lines. Central sanitization removes known credential patterns before PostgreSQL persistence. Evidence carries a default 30-day expiry; automatic retention deletion is intentionally deferred operational work.
+
+It deliberately does not contain diagnosis providers, remediation planning or execution, verification, recovery, rollback, realtime product behavior, or dashboard features.
 
 Future verification must never use a production database. Database-dependent verification must use a disposable test database or isolated dependency, and verification containers must not receive unnecessary production secrets.
 

@@ -1,4 +1,4 @@
-import { MONITORING_LIMITS, MVP_DEFAULTS } from "@selfheal/shared";
+import { EVIDENCE_LIMITS, MONITORING_LIMITS, MVP_DEFAULTS } from "@selfheal/shared";
 import { z } from "zod";
 
 const booleanFromString = z
@@ -25,12 +25,19 @@ const environmentSchema = z.object({
   JWT_TTL_HOURS: z.coerce.number().int().min(1).max(24).default(MVP_DEFAULTS.jwtTtlHours),
   AUTH_COOKIE_NAME: z.string().regex(/^[A-Za-z0-9_-]+$/).default("selfheal_token"),
   PASSWORD_HASH_ROUNDS: z.coerce.number().int().min(10).max(14).default(12),
-  EVIDENCE_MAX_BYTES: z.coerce.number().int().positive().default(MVP_DEFAULTS.evidenceMaxBytes),
-  EVIDENCE_MAX_LINES: z.coerce.number().int().positive().default(MVP_DEFAULTS.evidenceMaxLines),
+  EVIDENCE_MAX_BYTES: z.coerce.number().int()
+    .min(EVIDENCE_LIMITS.maxBytes.min)
+    .max(EVIDENCE_LIMITS.maxBytes.max)
+    .default(MVP_DEFAULTS.evidenceMaxBytes),
+  EVIDENCE_MAX_LINES: z.coerce.number().int()
+    .min(EVIDENCE_LIMITS.maxLines.min)
+    .max(EVIDENCE_LIMITS.maxLines.max)
+    .default(MVP_DEFAULTS.evidenceMaxLines),
   EVIDENCE_RETENTION_DAYS: z.coerce
     .number()
     .int()
-    .positive()
+    .min(EVIDENCE_LIMITS.retentionDays.min)
+    .max(EVIDENCE_LIMITS.retentionDays.max)
     .default(MVP_DEFAULTS.evidenceRetentionDays),
   HEALTH_CHECK_TIMEOUT_MS: z.coerce
     .number()

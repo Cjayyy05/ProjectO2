@@ -8,6 +8,11 @@ import { PrismaUserRepository } from "./auth/prisma-user-repository";
 import { loadEnvironment } from "./config/environment";
 import { createPrismaClient } from "./database/prisma";
 import { createDockerContainerInspector } from "./docker/dockerode-container-inspector";
+import { createDockerEvidenceSource } from "./docker/dockerode-evidence-source";
+import { EvidenceCoordinator } from "./evidence/evidence-coordinator";
+import { PrismaEvidenceRepository } from "./evidence/prisma-evidence-repository";
+import { EvidenceScheduler } from "./evidence/evidence-scheduler";
+import { EvidenceService } from "./evidence/evidence-service";
 import { createLogger } from "./logging/logger";
 import { HttpHealthChecker } from "./monitoring/http-health-checker";
 import { MonitoringCoordinator } from "./monitoring/monitoring-coordinator";
@@ -28,6 +33,28 @@ const authService = new AuthService(
 );
 const jwtService = new JwtService(config.jwt.secret, config.jwt.ttlHours);
 const projectService = new ProjectService(new PrismaProjectRepository(prisma));
+const evidenceRepository = new PrismaEvidenceRepository(prisma);
+const evidenceService = new EvidenceService(
+  evidenceRepository,
+  createDockerEvidenceSource(
+    config.monitoring.dockerInspectionTimeoutMs,
+    config.monitoring.dockerSocketPath
+  ),
+  config.evidence
+);
+const evidenceScheduler = new EvidenceScheduler(
+  new EvidenceCoordinator(
+    evidenceRepository,
+    evidenceService,
+    logger,
+    Math.max(
+      config.monitoring.dockerInspectionTimeoutMs * 3,
+      config.monitoring.pollIntervalMs * 2
+    )
+  ),
+  config.monitoring.pollIntervalMs,
+  logger
+);
 const monitoringRepository = new PrismaMonitoringRepository(prisma, config.monitoring);
 const monitoringService = new MonitoringService(
   monitoringRepository,
@@ -48,6 +75,7 @@ const server = createServer(app);
 
 server.listen(config.port, () => {
   logger.info({ port: config.port }, "SelfHeal API listening");
+  evidenceScheduler.start();
   monitoringScheduler.start();
 });
 
@@ -61,15 +89,21 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   logger.info({ signal }, "Shutting down SelfHeal API");
 
-  try {
-    await monitoringScheduler.stop();
-  } catch (monitoringError) {
-    logger.error(
-      { errorName: monitoringError instanceof Error ? monitoringError.name : "UnknownError" },
-      "Failed to stop monitoring cleanly"
-    );
-    process.exitCode = 1;
-  }
+  const schedulerStops = await Promise.allSettled([
+    monitoringScheduler.stop(),
+    evidenceScheduler.stop()
+  ]);
+  schedulerStops.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.error(
+        { errorName: result.reason instanceof Error ? result.reason.name : "UnknownError" },
+        index === 0
+          ? "Failed to stop monitoring cleanly"
+          : "Failed to stop evidence collection cleanly"
+      );
+      process.exitCode = 1;
+    }
+  });
 
   server.close(async (serverError) => {
     try {

@@ -22,3 +22,9 @@ export const MONITORING_LIMITS = Object.freeze({
   healthCheckTimeoutMs: Object.freeze({ min: 100, max: 30_000 }),
   incidentFailureThreshold: Object.freeze({ min: 1, max: 20 })
 });
+
+export const EVIDENCE_LIMITS = Object.freeze({
+  maxBytes: Object.freeze({ min: 1_024, max: MVP_DEFAULTS.evidenceMaxBytes }),
+  maxLines: Object.freeze({ min: 1, max: MVP_DEFAULTS.evidenceMaxLines }),
+  retentionDays: Object.freeze({ min: 1, max: 365 })
+});
