@@ -13,6 +13,7 @@ describe("environment validation", () => {
 
     expect(config.jwt.ttlHours).toBe(8);
     expect(config.evidence).toEqual({ maxBytes: 262_144, maxLines: 500, retentionDays: 30 });
+    expect(config.diagnosis).toEqual({ provider: "mock", leaseMs: 30_000 });
     expect(config.monitoring).toEqual({
       healthCheckTimeoutMs: 2_000,
       intervalMs: 10_000,
@@ -77,6 +78,17 @@ describe("environment validation", () => {
     ["EVIDENCE_RETENTION_DAYS", "366"]
   ])("rejects unsafe evidence bound %s=%s", (name, value) => {
     expect(() => loadEnvironment({ ...validEnvironment, [name]: value })).toThrow(
+      EnvironmentValidationError
+    );
+  });
+
+  it("accepts only the configured mock diagnosis provider and a bounded lease", () => {
+    expect(loadEnvironment({ ...validEnvironment, AI_PROVIDER: "mock", DIAGNOSIS_LEASE_MS: "5000" })
+      .diagnosis).toEqual({ provider: "mock", leaseMs: 5_000 });
+    expect(() => loadEnvironment({ ...validEnvironment, AI_PROVIDER: "gemini" })).toThrow(
+      EnvironmentValidationError
+    );
+    expect(() => loadEnvironment({ ...validEnvironment, DIAGNOSIS_LEASE_MS: "4999" })).toThrow(
       EnvironmentValidationError
     );
   });

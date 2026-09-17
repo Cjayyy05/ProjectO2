@@ -111,7 +111,11 @@ export class PrismaEvidenceRepository implements EvidenceRepository {
           version: target.incidentVersion,
           project: { userId: target.ownerId }
         },
-        data: { state: "DIAGNOSING", version: { increment: 1 } }
+        data: {
+          state: "DIAGNOSING",
+          version: { increment: 1 },
+          diagnosisClaimedAt: null
+        }
       });
       if (transitioned.count !== 1) {
         return false;

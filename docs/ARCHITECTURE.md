@@ -235,6 +235,19 @@ interface DiagnosisProvider {
 
 Provider results are validated before persistence. Gemini can later implement the same interface without changing approval or recovery.
 
+Phase 4 processes `DIAGNOSING` incidents with a separate non-overlapping in-process scheduler. An optimistic `diagnosisClaimedAt`/Incident-version lease provides immediate atomic claiming and bounded reclamation after interruption. Provider input contains at most 32 persisted evidence items and 384 KB of re-sanitized content. Success creates the single Diagnosis and transitions to `FIX_PROPOSED` in one transaction; provider, schema, or evidence-reference failure transitions to `DIAGNOSIS_FAILED`. A stale worker cannot persist after its version is reclaimed.
+
+The deterministic mock precedence is explicit and stable:
+
+1. missing or invalid environment/configuration;
+2. port configuration failure;
+3. database connection failure;
+4. container/application crash;
+5. generic health-check failure;
+6. insufficient evidence.
+
+Concrete persisted signals therefore override generic health failure. Incomplete or input-truncated evidence reduces confidence and recommends manual investigation. Provider output uses a strict runtime schema, references IncidentEvidence IDs rather than copying evidence, and can propose only the existing remediation categories. These suggestions do not create a RemediationPlan and cannot execute anything.
+
 ## 8. Docker abstraction
 
 The Express backend connects to the local Docker Engine. All access is centralized behind a small interface with separate read, sandbox, and production methods:

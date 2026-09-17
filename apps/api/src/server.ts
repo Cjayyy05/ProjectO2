@@ -7,6 +7,11 @@ import { JwtService } from "./auth/jwt-service";
 import { PrismaUserRepository } from "./auth/prisma-user-repository";
 import { loadEnvironment } from "./config/environment";
 import { createPrismaClient } from "./database/prisma";
+import { DiagnosisCoordinator } from "./diagnosis/diagnosis-coordinator";
+import { createDiagnosisProvider } from "./diagnosis/diagnosis-provider-factory";
+import { PrismaDiagnosisRepository } from "./diagnosis/prisma-diagnosis-repository";
+import { DiagnosisScheduler } from "./diagnosis/diagnosis-scheduler";
+import { DiagnosisService } from "./diagnosis/diagnosis-service";
 import { createDockerContainerInspector } from "./docker/dockerode-container-inspector";
 import { createDockerEvidenceSource } from "./docker/dockerode-evidence-source";
 import { EvidenceCoordinator } from "./evidence/evidence-coordinator";
@@ -33,6 +38,21 @@ const authService = new AuthService(
 );
 const jwtService = new JwtService(config.jwt.secret, config.jwt.ttlHours);
 const projectService = new ProjectService(new PrismaProjectRepository(prisma));
+const diagnosisRepository = new PrismaDiagnosisRepository(prisma);
+const diagnosisService = new DiagnosisService(
+  diagnosisRepository,
+  createDiagnosisProvider(config.diagnosis.provider)
+);
+const diagnosisScheduler = new DiagnosisScheduler(
+  new DiagnosisCoordinator(
+    diagnosisRepository,
+    diagnosisService,
+    logger,
+    config.diagnosis.leaseMs
+  ),
+  config.monitoring.pollIntervalMs,
+  logger
+);
 const evidenceRepository = new PrismaEvidenceRepository(prisma);
 const evidenceService = new EvidenceService(
   evidenceRepository,
@@ -75,6 +95,7 @@ const server = createServer(app);
 
 server.listen(config.port, () => {
   logger.info({ port: config.port }, "SelfHeal API listening");
+  diagnosisScheduler.start();
   evidenceScheduler.start();
   monitoringScheduler.start();
 });
@@ -91,7 +112,8 @@ async function shutdown(signal: string): Promise<void> {
 
   const schedulerStops = await Promise.allSettled([
     monitoringScheduler.stop(),
-    evidenceScheduler.stop()
+    evidenceScheduler.stop(),
+    diagnosisScheduler.stop()
   ]);
   schedulerStops.forEach((result, index) => {
     if (result.status === "rejected") {
@@ -99,7 +121,9 @@ async function shutdown(signal: string): Promise<void> {
         { errorName: result.reason instanceof Error ? result.reason.name : "UnknownError" },
         index === 0
           ? "Failed to stop monitoring cleanly"
-          : "Failed to stop evidence collection cleanly"
+          : index === 1
+            ? "Failed to stop evidence collection cleanly"
+            : "Failed to stop diagnosis cleanly"
       );
       process.exitCode = 1;
     }

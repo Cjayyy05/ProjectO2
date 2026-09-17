@@ -1,6 +1,6 @@
 # SelfHeal
 
-SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 3 monitoring, incident-detection, and bounded evidence-collection foundation.
+SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 4 monitoring, evidence-collection, and deterministic mock-diagnosis foundation.
 
 ## Development prerequisites
 
@@ -45,7 +45,13 @@ A separate non-overlapping in-process scheduler atomically claims `DETECTED` inc
 
 Docker logs are streamed and persisted up to the configured limits of at most 256 KB and 500 lines. Central sanitization removes known credential patterns before PostgreSQL persistence. Evidence carries a default 30-day expiry; automatic retention deletion is intentionally deferred operational work.
 
-It deliberately does not contain diagnosis providers, remediation planning or execution, verification, recovery, rollback, realtime product behavior, or dashboard features.
+It deliberately does not contain remediation planning or execution, verification, recovery, rollback, realtime product behavior, or dashboard features.
+
+## Phase 4 deterministic diagnosis
+
+Set `AI_PROVIDER=mock`. A non-overlapping scheduler atomically claims `DIAGNOSING` Incidents, builds a bounded input exclusively from persisted sanitized IncidentEvidence, and invokes the provider-neutral diagnosis interface. Mock rules have documented deterministic precedence for missing configuration, port mismatch, database connectivity, container crash, generic health failure, and insufficient evidence.
+
+All provider output is treated as untrusted: strict runtime validation rejects unsupported actions, arbitrary commands/paths, invalid confidence, oversized prose, and foreign evidence references. Valid diagnoses reference evidence IDs and atomically move the Incident to `FIX_PROPOSED`; provider or validation failure moves it to `DIAGNOSIS_FAILED`. Proposed remediation remains advisory and does not create a RemediationPlan.
 
 Future verification must never use a production database. Database-dependent verification must use a disposable test database or isolated dependency, and verification containers must not receive unnecessary production secrets.
 

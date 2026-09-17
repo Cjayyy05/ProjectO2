@@ -25,6 +25,8 @@ const environmentSchema = z.object({
   JWT_TTL_HOURS: z.coerce.number().int().min(1).max(24).default(MVP_DEFAULTS.jwtTtlHours),
   AUTH_COOKIE_NAME: z.string().regex(/^[A-Za-z0-9_-]+$/).default("selfheal_token"),
   PASSWORD_HASH_ROUNDS: z.coerce.number().int().min(10).max(14).default(12),
+  AI_PROVIDER: z.enum(["mock"]).default("mock"),
+  DIAGNOSIS_LEASE_MS: z.coerce.number().int().min(5_000).max(300_000).default(30_000),
   EVIDENCE_MAX_BYTES: z.coerce.number().int()
     .min(EVIDENCE_LIMITS.maxBytes.min)
     .max(EVIDENCE_LIMITS.maxBytes.max)
@@ -89,6 +91,10 @@ export interface AppConfig {
     readonly cookieName: string;
   };
   readonly passwordHashRounds: number;
+  readonly diagnosis: {
+    readonly provider: "mock";
+    readonly leaseMs: number;
+  };
   readonly evidence: {
     readonly maxBytes: number;
     readonly maxLines: number;
@@ -143,6 +149,10 @@ export function loadEnvironment(source: NodeJS.ProcessEnv): AppConfig {
       cookieName: env.AUTH_COOKIE_NAME
     },
     passwordHashRounds: env.PASSWORD_HASH_ROUNDS,
+    diagnosis: {
+      provider: env.AI_PROVIDER,
+      leaseMs: env.DIAGNOSIS_LEASE_MS
+    },
     evidence: {
       maxBytes: env.EVIDENCE_MAX_BYTES,
       maxLines: env.EVIDENCE_MAX_LINES,

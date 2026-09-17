@@ -160,6 +160,7 @@ model Incident {
   firstDetectedAt    DateTime          @default(now()) @db.Timestamptz(3)
   lastDetectedAt     DateTime          @default(now()) @db.Timestamptz(3)
   resolvedAt         DateTime?         @db.Timestamptz(3)
+  diagnosisClaimedAt DateTime?         @db.Timestamptz(3)
   evidence           IncidentEvidence[]
   diagnosis          Diagnosis?
   remediationPlans   RemediationPlan[]
@@ -171,6 +172,7 @@ model Incident {
 
   @@index([projectId, state])
   @@index([deploymentId])
+  @@index([state, diagnosisClaimedAt])
 }
 
 model IncidentEvidence {
