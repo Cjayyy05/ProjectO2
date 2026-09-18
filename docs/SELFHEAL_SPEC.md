@@ -148,6 +148,10 @@ The verification record stores its plan hash, target snapshot hash, sandbox/cont
 
 Verification failure is safe: it changes no production resource and cannot be approved.
 
+Phase 6 implements this lifecycle with a unique run per RemediationPlan, random claim token, Incident-version guard, and renewable lease. `PREPARING` covers integrity/baseline validation and isolated workspace staging; `RUNNING` covers candidate build, startup, trusted configured tests, required health checking, and bounded log capture. Structured check results retain the finer-grained gate outcome without expanding the database enum into a workflow engine.
+
+Every candidate is disposable. Docker build networking is disabled and runtime networking is internal with no host port exposure. A server-owned in-container probe checks only the registered port on `127.0.0.1` and the trusted health path; it never follows redirects or keeps the body. The candidate has no production database credentials, Docker socket, host mount, privileged mode, added capability, or provider-selected Docker option. A database-dependent candidate fails closed until a disposable dependency is available. Cleanup runs after every result and is recorded independently. A passed run with failed cleanup remains non-approvable under the approval invariant.
+
 ## 11. Recovery lifecycle
 
 ```text

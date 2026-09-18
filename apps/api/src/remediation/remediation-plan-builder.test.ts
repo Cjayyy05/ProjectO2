@@ -257,7 +257,10 @@ describe("RemediationPlanBuilder", () => {
     });
   });
 
-  it.each(["/etc/passwd", "C:/Windows/system.ini", "../secret.ts", "src/../secret.ts", "src\\file.ts"])(
+  it.each([
+    "/etc/passwd", "C:/Windows/system.ini", "../secret.ts", "src/../secret.ts", "src\\file.ts",
+    "src/file.ts:secret", "src/CON.txt", "src/trailing."
+  ])(
     "rejects unsafe patch path %s",
     (path) => {
       expect(builder.build(candidate(patchSuggestion(path, "old", "new")))).toEqual({
@@ -429,6 +432,41 @@ describe("RemediationPlanBuilder", () => {
     expect(hash(first, "targetSnapshotHash")).toBe(hash(differentAction, "targetSnapshotHash"));
   });
 
+  it("binds health configuration and trusted verification behavior into the exact plan", () => {
+    const firstCandidate = candidate(restartSuggestion());
+    const first = builder.build(firstCandidate);
+    const changedHealth = builder.build({
+      ...candidate(restartSuggestion()),
+      projectHealthCheckPath: "/ready",
+      projectExpectedPort: 9090
+    });
+    expect(hash(first, "planHash")).not.toBe(hash(changedHealth, "planHash"));
+    expect(hash(first, "targetSnapshotHash")).not.toBe(hash(changedHealth, "targetSnapshotHash"));
+
+    const source = {
+      files: [{ relativePath: "Dockerfile", content: "FROM node:22-alpine\n", contentHash: sha256Text("FROM node:22-alpine\n") }],
+      dockerfilePath: "Dockerfile",
+      test: { command: ["node", "test-a.js"], mandatory: true, timeoutMs: 1_000 }
+    };
+    const withSource = builder.build({
+      ...firstCandidate,
+      affectedDeployment: {
+        ...firstCandidate.affectedDeployment!,
+        configurationSnapshot: { verificationSource: source }
+      }
+    });
+    const withChangedTest = builder.build({
+      ...firstCandidate,
+      affectedDeployment: {
+        ...firstCandidate.affectedDeployment!,
+        configurationSnapshot: {
+          verificationSource: { ...source, test: { ...source.test, command: ["node", "test-b.js"] } }
+        }
+      }
+    });
+    expect(hash(withSource, "targetSnapshotHash")).not.toBe(hash(withChangedTest, "targetSnapshotHash"));
+  });
+
   it("commits every stored plan field that can affect later verification or recovery", () => {
     const decision = builder.build(candidate(restartSuggestion()));
     if (decision.kind !== "PLAN") throw new Error("Expected plan");
@@ -487,6 +525,7 @@ function candidate(diagnosisResult: unknown): RemediationPlanningCandidate {
     diagnosisId,
     diagnosisResult,
     affectedDeployment: affected,
+    projectHealthCheckPath: "/health",
     projectExpectedPort: 8080,
     projectDeployments: [
       affected,

@@ -77,6 +77,11 @@ const environmentSchema = z.object({
     .int()
     .positive()
     .default(MVP_DEFAULTS.candidateStartupTimeoutMs),
+  VERIFICATION_LEASE_MS: z.coerce.number().int().min(30_000).max(900_000).default(300_000),
+  VERIFICATION_BUILD_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
+  VERIFICATION_TEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(60_000),
+  VERIFICATION_OUTPUT_MAX_BYTES: z.coerce.number().int().min(1_024).max(262_144).default(65_536),
+  VERIFICATION_RESULT_TTL_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(3_600_000),
   TRUST_PROXY: booleanFromString.default(false)
 });
 
@@ -113,6 +118,13 @@ export interface AppConfig {
     readonly productionDatabaseAllowed: false;
     readonly requiresDisposableOrIsolatedDatabase: true;
     readonly receivesOnlyNecessarySecrets: true;
+    readonly leaseMs: number;
+    readonly buildTimeoutMs: number;
+    readonly startupTimeoutMs: number;
+    readonly testTimeoutMs: number;
+    readonly healthCheckTimeoutMs: number;
+    readonly outputMaxBytes: number;
+    readonly resultTtlMs: number;
   };
   readonly trustProxy: boolean;
 }
@@ -167,7 +179,16 @@ export function loadEnvironment(source: NodeJS.ProcessEnv): AppConfig {
       ...(env.DOCKER_SOCKET_PATH === undefined ? {} : { dockerSocketPath: env.DOCKER_SOCKET_PATH }),
       candidateStartupTimeoutMs: env.CANDIDATE_STARTUP_TIMEOUT_MS
     },
-    verification: MVP_DEFAULTS.verification,
+    verification: {
+      ...MVP_DEFAULTS.verification,
+      leaseMs: env.VERIFICATION_LEASE_MS,
+      buildTimeoutMs: env.VERIFICATION_BUILD_TIMEOUT_MS,
+      startupTimeoutMs: env.CANDIDATE_STARTUP_TIMEOUT_MS,
+      testTimeoutMs: env.VERIFICATION_TEST_TIMEOUT_MS,
+      healthCheckTimeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
+      outputMaxBytes: env.VERIFICATION_OUTPUT_MAX_BYTES,
+      resultTtlMs: env.VERIFICATION_RESULT_TTL_MS
+    },
     trustProxy: env.TRUST_PROXY
   };
 }

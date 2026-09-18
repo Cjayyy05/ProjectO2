@@ -1,7 +1,7 @@
 # SelfHeal One-Month MVP Implementation Plan
 
-Status: Phase 0 plan only; implementation has not started  
-Last updated: 2026-09-15
+Status: Phase 6 isolated verification implemented; approval and recovery remain planned
+Last updated: 2026-09-20
 
 ## 1. Locked implementation baseline
 
@@ -60,18 +60,21 @@ Exit checks:
 
 ## 4. Week 3 — Isolated verification and approval
 
-Planned scope:
+Phase 6 completed verification scope:
 
-- implement temporary isolated Docker verification containers/networks;
-- support deterministic health, process, port, and fatal-log checks;
-- store verification result, plan hash, target snapshot hash, cleanup status, and expiry;
+- implemented temporary workspaces and isolated Docker verification images, containers, and networks;
+- implemented exact-plan/baseline revalidation, action staging, build/start, trusted tests, required HTTP health check, bounded logs, cleanup, leases, persistence, and audit;
+- store verification result, plan hash, target snapshot hash, cleanup status, and expiry transactionally;
+
+Still deferred to Phase 7:
+
 - build exact-plan approval UI and API;
 - enforce owner identity, current verification, hash matching, and expiry;
 - add Socket.IO incident/verification/approval notifications with REST refetch behavior.
 
 Exit checks:
 
-- sandbox has no Docker socket, privileged mode, host mounts, or production credentials;
+- sandbox has no Docker socket, privileged mode, host mounts, or production credentials (implemented and tested);
 - failed or unclean verification cannot be approved;
 - changed/stale plans and cross-user requests cannot be approved;
 - reconnecting clients recover current state without an event outbox;

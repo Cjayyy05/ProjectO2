@@ -60,6 +60,10 @@ Provider output is untrusted. The backend validates it against a strict schema a
 
 Phase 5 adds a second deterministic trust boundary before a suggestion becomes a RemediationPlan. The planning builder has no Docker or filesystem capability. It derives restart targets from the Incident, validates rollback targets through same-Project history, rejects credential-shaped Deployment image identities, accepts only five explicitly non-secret environment keys with narrow value rules, and requires patch paths/hashes to match a trusted Deployment manifest. It stores structured data only; command fields, arbitrary Docker arguments, absolute/traversal paths, symlinks, protected/generated/binary files, secret-bearing patch content, and unbounded payloads are rejected. The persistence boundary revalidates plan structure, target consistency, and the canonical digest; digest mismatch becomes a bounded non-actionable disposition. Plan creation does not execute or verify the action.
 
+Phase 6 is the first execution boundary, but execution is limited to disposable verification resources. It recomputes the canonical plan digest and baseline before staging; Project health configuration and every registered verification behavior are bound to that baseline, and persisted plans are database-immutable. Application source and Docker build output remain untrusted: source is bounded, manifest-bound, secret-scanned, and written beneath a random temp root; patch paths are resolved again and checked against Windows device/alternate-stream syntax and symlink/reparse metadata; build and runtime output are sanitized and byte bounded. Unsafe source is represented only by a constant fail-closed marker rather than a secret-derived digest. The Docker adapter accepts a server-owned sandbox specification rather than plan-supplied flags. It hard-codes an internal network with no host port publishing, zero host mounts, no Docker socket, no privilege, dropped capabilities, read-only root, resource bounds, and a non-restarting container. Build networking is disabled. Health is checked by server-owned exact-argument code against only the plan-bound candidate port on its own loopback interface.
+
+The only allowed test execution is an operator-registered exact argument array from the trusted Deployment snapshot. Provider prose, RemediationPlan reason text, and patch content are never interpreted as commands. Verification never receives `DATABASE_URL`, JWT/provider credentials, cookies, production environment values, or ambient HTTP credentials. A candidate declaring a database dependency fails closed until a disposable dependency implementation exists. Cleanup failures are sanitized, isolated, audited, and make the result non-approvable in the later approval phase.
+
 Gemini requires a later review of data handling, redaction, credentials, structured output, prompt injection, timeouts, and cost. That adapter must not change the approval or recovery boundary.
 
 ## 6. Evidence and secret handling
@@ -81,7 +85,7 @@ Gemini requires a later review of data handling, redaction, credentials, structu
 - Allow only typed recovery actions and server-validated parameters.
 - Do not permit arbitrary images, entrypoints, commands, host paths, devices, capabilities, privileged mode, or Docker socket mounts.
 - Apply timeouts and output limits.
-- Label verification containers/networks and clean them during normal completion and startup reconciliation.
+- Label verification images, containers, and networks with exact managed and run ownership labels; verify both labels before per-run deletion and use the exact managed label for startup reconciliation.
 - Verification containers use isolated networking and no production credentials.
 - Capture current Docker state immediately before mutation and abort on drift.
 

@@ -27,6 +27,7 @@ const candidateSelection = {
   project: {
     select: {
       userId: true,
+      healthCheckPath: true,
       expectedPort: true,
       deployments: {
         orderBy: { createdAt: "desc" as const },
@@ -70,6 +71,7 @@ export class PrismaRemediationPlanningRepository implements RemediationPlanningR
       diagnosisId: incident.diagnosis.id,
       diagnosisResult: incident.diagnosis.result,
       affectedDeployment: incident.deployment === null ? null : mapDeployment(incident.deployment),
+      projectHealthCheckPath: incident.project.healthCheckPath,
       projectExpectedPort: incident.project.expectedPort,
       projectDeployments: incident.project.deployments.map(mapDeployment)
     };

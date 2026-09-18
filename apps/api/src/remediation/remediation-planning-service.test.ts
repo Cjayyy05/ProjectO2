@@ -16,6 +16,7 @@ describe("RemediationPlanningService", () => {
       diagnosisId: "diagnosis",
       diagnosisResult: {},
       affectedDeployment: null,
+      projectHealthCheckPath: null,
       projectExpectedPort: null,
       projectDeployments: []
     };

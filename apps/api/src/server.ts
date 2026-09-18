@@ -14,6 +14,7 @@ import { DiagnosisScheduler } from "./diagnosis/diagnosis-scheduler";
 import { DiagnosisService } from "./diagnosis/diagnosis-service";
 import { createDockerContainerInspector } from "./docker/dockerode-container-inspector";
 import { createDockerEvidenceSource } from "./docker/dockerode-evidence-source";
+import { createDockerVerificationSandbox } from "./docker/dockerode-verification-sandbox";
 import { EvidenceCoordinator } from "./evidence/evidence-coordinator";
 import { PrismaEvidenceRepository } from "./evidence/prisma-evidence-repository";
 import { EvidenceScheduler } from "./evidence/evidence-scheduler";
@@ -30,6 +31,10 @@ import { PrismaRemediationPlanningRepository } from "./remediation/prisma-remedi
 import { RemediationPlanBuilder } from "./remediation/remediation-plan-builder";
 import { RemediationPlanningScheduler } from "./remediation/remediation-planning-scheduler";
 import { RemediationPlanningService } from "./remediation/remediation-planning-service";
+import { PrismaVerificationRepository } from "./verification/prisma-verification-repository";
+import { VerificationScheduler } from "./verification/verification-scheduler";
+import { VerificationService } from "./verification/verification-service";
+import { VerificationWorkspaceManager } from "./verification/verification-workspace";
 
 const config = loadEnvironment(process.env);
 const logger = createLogger(config.nodeEnv);
@@ -60,6 +65,18 @@ const diagnosisScheduler = new DiagnosisScheduler(
 const remediationPlanningRepository = new PrismaRemediationPlanningRepository(prisma);
 const remediationPlanningScheduler = new RemediationPlanningScheduler(
   new RemediationPlanningService(remediationPlanningRepository, new RemediationPlanBuilder()),
+  config.monitoring.pollIntervalMs,
+  logger
+);
+const verificationRepository = new PrismaVerificationRepository(prisma);
+const verificationScheduler = new VerificationScheduler(
+  new VerificationService(
+    verificationRepository,
+    new VerificationWorkspaceManager(),
+    createDockerVerificationSandbox(config.monitoring.dockerSocketPath),
+    config.verification,
+    logger
+  ),
   config.monitoring.pollIntervalMs,
   logger
 );
@@ -107,6 +124,7 @@ server.listen(config.port, () => {
   logger.info({ port: config.port }, "SelfHeal API listening");
   diagnosisScheduler.start();
   remediationPlanningScheduler.start();
+  verificationScheduler.start();
   evidenceScheduler.start();
   monitoringScheduler.start();
 });
@@ -125,7 +143,8 @@ async function shutdown(signal: string): Promise<void> {
     monitoringScheduler.stop(),
     evidenceScheduler.stop(),
     diagnosisScheduler.stop(),
-    remediationPlanningScheduler.stop()
+    remediationPlanningScheduler.stop(),
+    verificationScheduler.stop()
   ]);
   schedulerStops.forEach((result, index) => {
     if (result.status === "rejected") {
@@ -137,7 +156,9 @@ async function shutdown(signal: string): Promise<void> {
             ? "Failed to stop evidence collection cleanly"
             : index === 2
               ? "Failed to stop diagnosis cleanly"
-              : "Failed to stop remediation planning cleanly"
+              : index === 3
+                ? "Failed to stop remediation planning cleanly"
+                : "Failed to stop verification cleanly"
       );
       process.exitCode = 1;
     }

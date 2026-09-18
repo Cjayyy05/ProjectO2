@@ -23,6 +23,15 @@ describe("environment validation", () => {
       candidateStartupTimeoutMs: 60_000
     });
     expect(config.verification.productionDatabaseAllowed).toBe(false);
+    expect(config.verification).toMatchObject({
+      leaseMs: 300_000,
+      buildTimeoutMs: 120_000,
+      startupTimeoutMs: 60_000,
+      testTimeoutMs: 60_000,
+      healthCheckTimeoutMs: 2_000,
+      outputMaxBytes: 65_536,
+      resultTtlMs: 3_600_000
+    });
   });
 
   it("fails clearly when required values are missing", () => {
@@ -53,11 +62,13 @@ describe("environment validation", () => {
       EVIDENCE_MAX_BYTES: "1024",
       EVIDENCE_MAX_LINES: "25",
       EVIDENCE_RETENTION_DAYS: "7",
-      MONITORING_INTERVAL_MS: "15000"
+      MONITORING_INTERVAL_MS: "15000",
+      VERIFICATION_OUTPUT_MAX_BYTES: "8192"
     });
 
     expect(config.evidence).toEqual({ maxBytes: 1_024, maxLines: 25, retentionDays: 7 });
     expect(config.monitoring.intervalMs).toBe(15_000);
+    expect(config.verification.outputMaxBytes).toBe(8_192);
   });
 
   it.each([

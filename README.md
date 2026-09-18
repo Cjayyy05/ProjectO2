@@ -1,6 +1,6 @@
 # SelfHeal
 
-SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 5 monitoring, evidence, deterministic diagnosis, and controlled remediation-planning foundation.
+SelfHeal is an AI-assisted recovery platform for locally deployed Docker applications. This repository currently contains the Phase 6 monitoring, evidence, deterministic diagnosis, controlled remediation planning, and isolated verification foundation.
 
 ## Development prerequisites
 
@@ -35,7 +35,7 @@ Never point this integration test at a production database.
 
 Create a project, register its Docker deployment with `POST /api/projects/:projectId/deployments`, then configure monitoring with `PATCH /api/projects/:projectId/monitoring`. A project has at most one current deployment: registering a replacement atomically marks the previous deployment historical, and monitoring selects only the current deployment. Health checks accept a path such as `/health`, never a URL. The backend targets only `127.0.0.1`, verifies that the configured host port is published by the registered container, and never follows redirects.
 
-Docker integration tests are opt-in. Set `RUN_DOCKER_INTEGRATION_TESTS=true` plus `TEST_DOCKER_RUNNING_CONTAINER`, `TEST_DOCKER_RUNNING_PORT`, `TEST_DOCKER_STOPPED_CONTAINER`, `TEST_DOCKER_EVIDENCE_CONTAINER`, and `TEST_DOCKER_EVIDENCE_SECRET` to disposable fixtures. The evidence fixture should contain that seeded non-production secret in its environment/logs so redaction can be verified. The vertical-slice tests also require `RUN_DATABASE_INTEGRATION_TESTS=true` and a disposable migrated database. Run database-backed integration files with `vitest run --no-file-parallelism` because they intentionally share that disposable schema and exercise global work claiming.
+Docker integration tests are opt-in. Set `RUN_DOCKER_INTEGRATION_TESTS=true` plus `TEST_DOCKER_RUNNING_CONTAINER`, `TEST_DOCKER_RUNNING_PORT`, `TEST_DOCKER_STOPPED_CONTAINER`, `TEST_DOCKER_EVIDENCE_CONTAINER`, and `TEST_DOCKER_EVIDENCE_SECRET` to disposable fixtures. The evidence fixture should contain that seeded non-production secret in its environment/logs so redaction can be verified. Phase 6 also uses `TEST_DOCKER_VERIFICATION_BASE_IMAGE`, which must name an already available trusted Node image used only to build the disposable verification fixture. The vertical-slice tests also require `RUN_DATABASE_INTEGRATION_TESTS=true` and a disposable migrated database. Run database-backed integration files with `vitest run --no-file-parallelism` because they intentionally share that disposable schema and exercise global work claiming.
 
 Phase 2 includes read-only Docker inspection, bounded HTTP checks, persisted health/failure state, in-process scheduling, and deduplicated `CONTAINER_CRASH` and `HEALTH_CHECK_FAILURE` incidents.
 
@@ -45,7 +45,7 @@ A separate non-overlapping in-process scheduler atomically claims `DETECTED` inc
 
 Docker logs are streamed and persisted up to the configured limits of at most 256 KB and 500 lines. Central sanitization removes known credential patterns before PostgreSQL persistence. Evidence carries a default 30-day expiry; automatic retention deletion is intentionally deferred operational work.
 
-It deliberately does not contain remediation planning or execution, verification, recovery, rollback, realtime product behavior, or dashboard features.
+It deliberately does not contain remediation planning or execution, verification, recovery, rollback, realtime product behavior, or dashboard features; those responsibilities are introduced only in their later phases.
 
 ## Phase 4 deterministic diagnosis
 
@@ -61,6 +61,14 @@ Restart targets are derived from the Incident rather than provider input. Rollba
 
 Plan hashes use canonical JSON and SHA-256 over schema/version, Incident, Diagnosis, Project and affected Deployment identity, action-type identity, the exact typed action, evidence references, diagnosis-result hash, trusted action baseline, review summary, rollback semantics, and target snapshot hash. Creation time is deliberately excluded. Persistence validates the digest again before inserting the plan. Phase 5 reads and writes PostgreSQL only: it does not call Docker, read or write application files, mutate environment configuration, verify, approve, or execute remediation.
 
-Future verification must never use a production database. Database-dependent verification must use a disposable test database or isolated dependency, and verification containers must not receive unnecessary production secrets.
+## Phase 6 isolated remediation verification
 
-Future production recovery for a project will use one project-scoped PostgreSQL advisory lock. Phase 5 does not implement recovery or a generic lock abstraction.
+A dedicated non-overlapping scheduler claims only persisted actionable plans, revalidates the Phase 5 canonical plan digest and target baseline, and stages the exact typed action in a unique operating-system temporary workspace. Restart and environment verification derive an image-only candidate from the affected Deployment; rollback derives it from the exact eligible historical Deployment; a file patch requires bounded trusted source content whose path and SHA-256 still match the registered manifest. Missing source, drift, unsafe paths, symlinks, secret-bearing content, or a database dependency without a disposable database fails safely.
+
+The Docker adapter builds a uniquely tagged disposable image with networking disabled during build and starts it on an internal network with no host port exposure. The candidate has no privileged mode, host mounts, Docker socket, production credentials, added capabilities, host namespace, or provider-selected Docker flags. It uses a read-only root filesystem, a bounded `/tmp`, memory/CPU/PID limits, and a no-restart policy. Only a preconfigured exact-argument test command may run; absent tests are recorded as `NOT_CONFIGURED`. Because Docker does not publish ports from an internal network, a server-owned exact-argument Node probe checks only the registered container-local port and trusted health path. It fixes the host to `127.0.0.1`, never follows redirects, discards the body, and is time bounded; a non-Node candidate fails safely rather than receiving broader networking.
+
+Verification output is sanitized and byte bounded. Completion stores the exact plan and target hashes, structured gate results, cleanup status, expiry, and audit event in the same transaction that moves the Incident to `AWAITING_APPROVAL` or `VERIFICATION_FAILED`. Claim tokens, Incident versions, a narrow lease with renewal, and one-run-per-plan uniqueness prevent stale or duplicate persistence. Cleanup is idempotently attempted after every outcome, and startup reconciliation removes only labeled verification resources and `run-*` directories beneath the dedicated temp root after a hard interruption. A cleanup failure is recorded and must make the result ineligible for approval even though it does not rewrite the remediation test result itself.
+
+Database-dependent verification requires a disposable database or isolated dependency; because Phase 6 does not yet provision one, those candidates fail with `UNSAFE_DEPENDENCY`. No production approval or recovery API exists in this phase.
+
+Future production recovery for a project will use one project-scoped PostgreSQL advisory lock. Phase 6 does not implement approval, recovery, production mutation, or a generic lock abstraction.

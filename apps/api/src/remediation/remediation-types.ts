@@ -44,6 +44,7 @@ export interface RemediationPlanningCandidate {
   readonly diagnosisId: string;
   readonly diagnosisResult: unknown;
   readonly affectedDeployment: PlanningDeployment | null;
+  readonly projectHealthCheckPath: string | null;
   readonly projectExpectedPort: number | null;
   readonly projectDeployments: readonly PlanningDeployment[];
 }

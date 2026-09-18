@@ -245,6 +245,7 @@ model RemediationPlan {
 
   @@unique([incidentId, version])
   @@unique([diagnosisId, incidentId])
+  @@unique([id, incidentId])
   @@index([incidentId])
   @@index([projectId])
   @@index([deploymentId])
@@ -254,11 +255,14 @@ model VerificationRun {
   id                 String            @id @default(uuid()) @db.Uuid
   incidentId         String            @db.Uuid
   incident           Incident          @relation(fields: [incidentId], references: [id], onDelete: Restrict)
-  remediationPlanId  String            @db.Uuid
-  remediationPlan    RemediationPlan   @relation(fields: [remediationPlanId], references: [id], onDelete: Restrict)
+  remediationPlanId  String            @unique @db.Uuid
+  remediationPlan    RemediationPlan   @relation(fields: [remediationPlanId, incidentId], references: [id, incidentId], onDelete: Restrict)
   state              VerificationState @default(PENDING)
   planHash           String
   targetSnapshotHash String
+  claimToken         String?           @db.Uuid
+  claimedAt          DateTime?         @db.Timestamptz(3)
+  failureCode        String?
   sandboxIdentifier  String?
   checkResults       Json?
   boundedOutput      String?
@@ -271,7 +275,7 @@ model VerificationRun {
   updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
 
   @@index([incidentId])
-  @@index([remediationPlanId, state])
+  @@index([state, claimedAt])
 }
 
 model Approval {

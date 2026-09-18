@@ -26,6 +26,7 @@ const SENSITIVE_ENVIRONMENT_NAME = /(?:PASSWORD|PASSWD|PWD|TOKEN|SECRET|API_?KEY
 const SAFE_CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const SAFE_IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$/;
 const CREDENTIAL_SHAPED_IMAGE_REFERENCE = /(?:^|\/)[^/:@]+:[^/@]+@/;
+const BASELINE_SANITIZER = new EvidenceSanitizer();
 const configurationSnapshotSchema = z.object({
   safeEnvironment: z.record(z.string(), z.string().max(256)).optional(),
   applicationFiles: z.array(z.object({
@@ -35,7 +36,22 @@ const configurationSnapshotSchema = z.object({
     generated: z.boolean().optional(),
     protected: z.boolean().optional(),
     symlink: z.boolean().optional()
-  }).strict()).max(256).optional()
+  }).strict()).max(256).optional(),
+  verificationSource: z.object({
+    files: z.array(z.object({
+      relativePath: z.string().min(1).max(240),
+      content: z.string().max(64 * 1_024),
+      contentHash: z.string().regex(/^[a-f0-9]{64}$/)
+    }).strict()).min(1).max(128),
+    dockerfilePath: z.string().min(1).max(240),
+    safeEnvironment: z.record(z.string(), z.string().max(256)).optional(),
+    test: z.object({
+      command: z.array(z.string().min(1).max(256)).min(1).max(16),
+      mandatory: z.boolean(),
+      timeoutMs: z.number().int().min(100).max(300_000)
+    }).strict().optional(),
+    requiresDatabase: z.boolean().optional()
+  }).strict().optional()
 }).passthrough();
 
 type Proposal = NonNullable<ReturnType<typeof diagnosisResultSchema.parse>["proposedRemediation"]>;
@@ -67,7 +83,11 @@ export class RemediationPlanBuilder {
     const diagnosisResultHash = sha256Canonical(diagnosis);
     const targetBaseline = {
       affectedDeployment: deploymentIdentity(affected),
-      action: actionResult.baseline
+      action: actionResult.baseline,
+      verification: {
+        healthCheckPath: candidate.projectHealthCheckPath,
+        expectedPort: candidate.projectExpectedPort
+      }
     };
     const baseline = {
       diagnosisId: candidate.diagnosisId,
@@ -344,7 +364,7 @@ function isSafeSnapshotEnvironmentValue(
   return isAllowedEnvironmentValue(name, value, null);
 }
 
-function deploymentIdentity(deployment: PlanningDeployment): Readonly<Record<string, unknown>> {
+export function deploymentIdentity(deployment: PlanningDeployment): Readonly<Record<string, unknown>> {
   return {
     id: deployment.id,
     projectId: deployment.projectId,
@@ -363,7 +383,7 @@ function hasSafeDeploymentIdentity(deployment: PlanningDeployment): boolean {
     !CREDENTIAL_SHAPED_IMAGE_REFERENCE.test(deployment.imageReference);
 }
 
-function safeConfigurationSnapshot(value: unknown): Readonly<Record<string, unknown>> {
+export function safeConfigurationSnapshot(value: unknown): Readonly<Record<string, unknown>> {
   const parsed = configurationSnapshotSchema.safeParse(value);
   if (!parsed.success) return {};
   const safeEnvironment = Object.fromEntries(
@@ -383,20 +403,48 @@ function safeConfigurationSnapshot(value: unknown): Readonly<Record<string, unkn
       symlink: file.symlink ?? false
     }))
     .sort((left, right) => compareCanonicalStrings(left.relativePath, right.relativePath));
-  return { safeEnvironment, applicationFiles };
+  const verificationSource = parsed.data.verificationSource;
+  const verificationSourceSafe = verificationSource !== undefined &&
+    isSafeRelativePath(verificationSource.dockerfilePath) &&
+    verificationSource.files.every((file) =>
+      isSafeRelativePath(file.relativePath) &&
+      sha256Text(file.content) === file.contentHash &&
+      BASELINE_SANITIZER.sanitizeText(file.content) === file.content) &&
+    Object.entries(verificationSource.safeEnvironment ?? {}).every(([name, environmentValue]) =>
+      isAllowedEnvironmentName(name) && isSafeSnapshotEnvironmentValue(name, environmentValue)) &&
+    (verificationSource.test === undefined || verificationSource.test.command.every((part) =>
+      BASELINE_SANITIZER.sanitizeText(part) === part));
+  const verificationSourceHash = verificationSource === undefined ? null : !verificationSourceSafe
+    ? sha256Canonical({ status: "unsafe" })
+    : sha256Canonical({
+    files: verificationSource.files
+      .map((file) => ({ relativePath: file.relativePath, contentHash: file.contentHash }))
+      .sort((left, right) => compareCanonicalStrings(left.relativePath, right.relativePath)),
+    dockerfilePath: verificationSource.dockerfilePath,
+    safeEnvironment: Object.fromEntries(
+      Object.entries(verificationSource.safeEnvironment ?? {})
+        .sort(([left], [right]) => compareCanonicalStrings(left, right))
+    ),
+    test: verificationSource.test ?? null,
+    requiresDatabase: verificationSource.requiresDatabase ?? false
+    });
+  return { safeEnvironment, applicationFiles, verificationSourceHash };
 }
 
-function isSafeRelativePath(path: string): boolean {
+export function isSafeRelativePath(path: string): boolean {
   if (path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:/.test(path) || path.includes("\\")) {
     return false;
   }
   const segments = path.split("/");
   return segments.length > 0 && segments.every((segment) =>
-    segment.length > 0 && segment !== "." && segment !== ".." && !segment.includes("\0")
+    segment.length > 0 && segment !== "." && segment !== ".." &&
+    !/[<>:"|?*\u0000-\u001F]/u.test(segment) &&
+    !/[ .]$/u.test(segment) &&
+    !/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/iu.test(segment)
   );
 }
 
-function isProtectedPath(path: string): boolean {
+export function isProtectedPath(path: string): boolean {
   const lower = path.toLowerCase();
   const segments = lower.split("/");
   const fileName = segments.at(-1) ?? "";
